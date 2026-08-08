@@ -1,0 +1,3 @@
+# Drop Square Cloud certificate.pem here (do not commit).
+# Example env:
+#   REDIS_SSL_CERT_PATH=./src/databases/redis/certificates/certificate.pem

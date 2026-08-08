@@ -1,0 +1,162 @@
+[
+  {
+    "parentExternalId": 25,
+    "sections": [
+      { "externalId": 215, "name": "Contas", "slug": "contas" },
+      { "externalId": 216, "name": "Diamantes", "slug": "diamantes" },
+      { "externalId": 217, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 17,
+    "sections": [
+      { "externalId": 68, "name": "Boost de Patente", "slug": "boost-de-patente" },
+      { "externalId": 69, "name": "Contas e outros", "slug": "contas-e-outros" },
+      { "externalId": 70, "name": "Skins", "slug": "skins" }
+    ]
+  },
+  {
+    "parentExternalId": 186,
+    "sections": [
+      { "externalId": 236, "name": "Badges e Emblemas", "slug": "badges-e-emblemas" },
+      { "externalId": 233, "name": "Bots e Automação", "slug": "bots-e-automacao" },
+      { "externalId": 235, "name": "Contas Iniciais", "slug": "contas-iniciais" },
+      { "externalId": 234, "name": "Nitro e Impulsos", "slug": "nitro-e-impulsos" },
+      { "externalId": 237, "name": "Serviços", "slug": "servicos" },
+      { "externalId": 232, "name": "Servidores", "slug": "servidores" }
+    ]
+  },
+  {
+    "parentExternalId": 59,
+    "sections": [
+      { "externalId": 163, "name": "Contas", "slug": "contas" },
+      { "externalId": 167, "name": "Skins e Bundles", "slug": "skins-e-bundles" },
+      { "externalId": 161, "name": "VP e Pontos", "slug": "vp-e-pontos" },
+      { "externalId": 204, "name": "Boost e Coaching", "slug": "boost-e-coaching" },
+      { "externalId": 159, "name": "Contas Smurf", "slug": "contas-smurf" },
+      { "externalId": 245, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 30,
+    "sections": [
+      { "externalId": 63, "name": "Contas", "slug": "contas" },
+      { "externalId": 65, "name": "Elojob", "slug": "elojob" },
+      { "externalId": 218, "name": "Duo Boost", "slug": "duo-boost" },
+      { "externalId": 64, "name": "Skins", "slug": "skins" },
+      { "externalId": 66, "name": "RP e Essência", "slug": "rp-e-essencia" },
+      { "externalId": 106, "name": "Coaching", "slug": "coaching" },
+      { "externalId": 138, "name": "Contas Unranked", "slug": "contas-unranked" },
+      { "externalId": 67, "name": "Flash Warnings", "slug": "flash-warnings" },
+      { "externalId": 62, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 24,
+    "sections": [
+      { "externalId": 211, "name": "Contas", "slug": "contas" },
+      { "externalId": 214, "name": "V-Bucks", "slug": "v-bucks" },
+      { "externalId": 213, "name": "Skins e Itens", "slug": "skins-e-itens" },
+      { "externalId": 212, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 137,
+    "sections": [
+      { "externalId": 187, "name": "Contas", "slug": "contas" },
+      { "externalId": 189, "name": "Genesis Crystals", "slug": "genesis-crystals" },
+      { "externalId": 188, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 22,
+    "sections": [
+      { "externalId": 80, "name": "Contas", "slug": "contas" },
+      { "externalId": 78, "name": "Itens e Skins", "slug": "itens-e-skins" },
+      { "externalId": 79, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 53,
+    "sections": [
+      { "externalId": 223, "name": "Contas", "slug": "contas" },
+      { "externalId": 222, "name": "Jogos e Keys", "slug": "jogos-e-keys" },
+      { "externalId": 224, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 169,
+    "sections": [
+      { "externalId": 243, "name": "Instagram", "slug": "instagram" },
+      { "externalId": 238, "name": "TikTok", "slug": "tiktok" },
+      { "externalId": 244, "name": "YouTube", "slug": "youtube" },
+      { "externalId": 240, "name": "Twitter / X", "slug": "twitter-x" },
+      { "externalId": 239, "name": "Facebook", "slug": "facebook" },
+      { "externalId": 241, "name": "Kwai", "slug": "kwai" },
+      { "externalId": 242, "name": "Twitch", "slug": "twitch" },
+      { "externalId": 402, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 123,
+    "sections": [
+      { "externalId": 396, "name": "Design", "slug": "design" },
+      { "externalId": 391, "name": "Programação", "slug": "programacao" },
+      { "externalId": 392, "name": "Marketing", "slug": "marketing" },
+      { "externalId": 394, "name": "Edição de Vídeo", "slug": "edicao-de-video" },
+      { "externalId": 395, "name": "Automação", "slug": "automacao" },
+      { "externalId": 390, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 47,
+    "sections": [
+      { "externalId": 101, "name": "Contas", "slug": "contas" },
+      { "externalId": 98, "name": "Items", "slug": "items" },
+      { "externalId": 99, "name": "Gold", "slug": "gold" },
+      { "externalId": 100, "name": "Chars", "slug": "chars" },
+      { "externalId": 102, "name": "Quest Service", "slug": "quest-service" },
+      { "externalId": 103, "name": "Houses", "slug": "houses" },
+      { "externalId": 104, "name": "Bazaar", "slug": "bazaar" },
+      { "externalId": 105, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 34,
+    "sections": [
+      { "externalId": 307, "name": "Contas", "slug": "contas" },
+      { "externalId": 311, "name": "Itens", "slug": "itens" },
+      { "externalId": 309, "name": "Capas e Capas+", "slug": "capas" },
+      { "externalId": 308, "name": "Servidores", "slug": "servidores" },
+      { "externalId": 310, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 149,
+    "sections": [
+      { "externalId": 199, "name": "Contas", "slug": "contas" },
+      { "externalId": 201, "name": "Robux", "slug": "robux" },
+      { "externalId": 200, "name": "Itens", "slug": "itens" },
+      { "externalId": 198, "name": "Gamepasses", "slug": "gamepasses" },
+      { "externalId": 202, "name": "Serviços", "slug": "servicos" },
+      { "externalId": 203, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 61,
+    "sections": [
+      { "externalId": 262, "name": "Contas", "slug": "contas" },
+      { "externalId": 261, "name": "Outros", "slug": "outros" }
+    ]
+  },
+  {
+    "parentExternalId": 11,
+    "sections": [
+      { "externalId": 75, "name": "Contas", "slug": "contas" },
+      { "externalId": 77, "name": "Gold", "slug": "gold" },
+      { "externalId": 144, "name": "Boosts", "slug": "boosts" },
+      { "externalId": 145, "name": "Itens", "slug": "itens" },
+      { "externalId": 76, "name": "Outros", "slug": "outros" }
+    ]
+  }
+]

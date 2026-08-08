@@ -1,0 +1,422 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  BUYER
+  SELLER
+  ADMIN
+}
+
+enum KycStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  SOLD
+  REMOVED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  DELIVERED
+  COMPLETED
+  DISPUTED
+  REFUNDED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum DisputeStatus {
+  OPEN
+  RESOLVED
+  CANCELLED
+}
+
+enum DisputeResolution {
+  RELEASE_TO_SELLER
+  REFUND_BUYER
+  PARTIAL
+}
+
+enum LedgerType {
+  CREDIT_SALE
+  DEBIT_PAYOUT
+  PLATFORM_FEE
+  REFUND
+  ADJUSTMENT
+}
+
+enum PayoutStatus {
+  REQUESTED
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum MediaPurpose {
+  GENERAL
+  LISTING
+  AVATAR
+  CATEGORY
+}
+
+enum CategoryStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum MediaVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String?
+  name         String?
+  avatarUrl    String?
+  role         Role      @default(BUYER)
+  kycStatus    KycStatus @default(NONE)
+  pixKey       String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  accounts         Account[]
+  listings         Listing[]       @relation("SellerListings")
+  ordersAsBuyer    Order[]         @relation("BuyerOrders")
+  ordersAsSeller   Order[]         @relation("SellerOrders")
+  messages         Message[]
+  disputesOpened   Dispute[]       @relation("DisputeOpener")
+  ledgerEntries    WalletLedger[]
+  payouts          Payout[]
+  auditLogs        AuditLog[]
+  mediaAssets      MediaAsset[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+/// Hierarchical marketplace category (games, subscriptions, digital services, etc.)
+model Category {
+  id       String  @id @default(cuid())
+  parentId String?
+  /// External id when imported (e.g. GGMAX)
+  externalId Int?  @unique
+
+  name String
+  slug String
+  /// Absolute path e.g. /jogos/free-fire
+  slugPath String @unique
+
+  status CategoryStatus @default(ACTIVE)
+
+  orderInstruction   String? @db.Text
+  showInMenu         Boolean @default(false)
+  acceleratedRelease Boolean @default(false)
+  /// e.g. { "no_plan": 30, "vip_basic": 60, "vip_premium": 90 }
+  interventionDeadlines Json?
+  isFeatured         Boolean @default(false)
+  isAdult            Boolean @default(false)
+
+  imageUrl String?
+  iconUrl  String?
+  hasWebp  Boolean @default(false)
+
+  templateDescription String? @db.Text
+
+  balanceReleaseDays     Int     @default(7)
+  keywords               String? @db.Text
+  descriptionSeo         String? @db.Text
+  titleSeo               String?
+  subtitleSeo            String?
+  slugSeo                String?
+  defaultOrderBy         String  @default("best-selling")
+  /// Comma-separated external child ids (deeper taxonomy), when known
+  childrenExternalIds    String?
+  requiredUserValidation Boolean @default(false)
+  isNoindex              Boolean?
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Category[] @relation("CategoryTree")
+  listings Listing[]
+
+  @@index([parentId, status])
+  @@index([status, showInMenu])
+  @@index([status, isFeatured])
+  @@index([slug])
+  @@map("categories")
+}
+
+/// Uploaded binary tracked by the media CDN layer.
+model MediaAsset {
+  id             String          @id @default(cuid())
+  ownerId        String?
+  /// Storage object key (never trust client paths)
+  key            String          @unique
+  /// Public CDN URL or API content URL
+  url            String
+  mimeType       String
+  sizeBytes      Int
+  width          Int?
+  height         Int?
+  purpose        MediaPurpose    @default(GENERAL)
+  visibility     MediaVisibility @default(PUBLIC)
+  originalName   String?
+  checksumSha256 String?
+  deletedAt      DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  owner          User?           @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, createdAt])
+  @@index([purpose, deletedAt])
+  @@map("media_assets")
+}
+
+enum ListingModel {
+  NORMAL
+  DYNAMIC
+  SERVICE
+}
+
+model Listing {
+  id            String        @id @default(cuid())
+  sellerId      String
+  categoryId    String
+  title         String
+  description   String
+  priceCents    Int
+  /// Stock for NORMAL/SERVICE. DYNAMIC uses per-offer stock.
+  stockQuantity Int           @default(1)
+  /// Seller-facing product kind: CONTA | ITEM | SERVICO | GOLD | OUTROS
+  productType   String?
+  listingModel  ListingModel  @default(NORMAL)
+  status        ListingStatus @default(DRAFT)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  seller   User           @relation("SellerListings", fields: [sellerId], references: [id])
+  category Category       @relation(fields: [categoryId], references: [id])
+  media    ListingMedia[]
+  offers   ListingOffer[]
+  orders   Order[]
+
+  @@index([status, categoryId])
+  @@index([sellerId])
+  @@map("listings")
+}
+
+/// Options inside a DYNAMIC listing (GGMAX-style multi-item ad).
+model ListingOffer {
+  id            String   @id @default(cuid())
+  listingId     String
+  title         String
+  priceCents    Int
+  stockQuantity Int      @default(1)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+  @@map("listing_offers")
+}
+
+model ListingMedia {
+  id        String   @id @default(cuid())
+  listingId String
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+  @@map("listing_media")
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  listingId   String
+  buyerId     String
+  sellerId    String
+  amountCents Int
+  feeCents    Int
+  status      OrderStatus @default(PENDING_PAYMENT)
+  paidAt      DateTime?
+  deliveredAt DateTime?
+  completedAt DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  listing       Listing        @relation(fields: [listingId], references: [id])
+  buyer         User           @relation("BuyerOrders", fields: [buyerId], references: [id])
+  seller        User           @relation("SellerOrders", fields: [sellerId], references: [id])
+  payment       Payment?
+  escrowHold    EscrowHold?
+  conversation  Conversation?
+  dispute       Dispute?
+  ledgerEntries WalletLedger[]
+
+  @@index([buyerId])
+  @@index([sellerId])
+  @@index([status])
+  @@map("orders")
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  orderId     String        @unique
+  provider    String
+  providerRef String
+  status      PaymentStatus @default(PENDING)
+  amountCents Int
+  rawWebhook  Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  order       Order         @relation(fields: [orderId], references: [id])
+
+  @@unique([provider, providerRef])
+  @@map("payments")
+}
+
+model EscrowHold {
+  id          String    @id @default(cuid())
+  orderId     String    @unique
+  amountCents Int
+  releaseAt   DateTime
+  releasedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  order       Order     @relation(fields: [orderId], references: [id])
+
+  @@index([releaseAt])
+  @@map("escrow_holds")
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  orderId   String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  order     Order     @relation(fields: [orderId], references: [id])
+  messages  Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  senderId       String
+  body           String
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+model Dispute {
+  id         String             @id @default(cuid())
+  orderId    String             @unique
+  openedById String
+  reason     String
+  status     DisputeStatus      @default(OPEN)
+  resolution DisputeResolution?
+  notes      String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  order      Order              @relation(fields: [orderId], references: [id])
+  openedBy   User               @relation("DisputeOpener", fields: [openedById], references: [id])
+
+  @@index([status])
+  @@map("disputes")
+}
+
+model WalletLedger {
+  id           String     @id @default(cuid())
+  userId       String
+  orderId      String?
+  type         LedgerType
+  amountCents  Int
+  balanceAfter Int
+  description  String?
+  createdAt    DateTime   @default(now())
+  user         User       @relation(fields: [userId], references: [id])
+  order        Order?     @relation(fields: [orderId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("wallet_ledger")
+}
+
+model Payout {
+  id          String       @id @default(cuid())
+  userId      String
+  amountCents Int
+  pixKey      String
+  status      PayoutStatus @default(REQUESTED)
+  providerRef String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  user        User         @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@map("payouts")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  meta       Json?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

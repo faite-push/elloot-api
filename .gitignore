@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+build/
+coverage/
+
+# env — keep examples
+.env
+.env.*
+!.env.example
+
+# logs / OS
+*.log
+.DS_Store
+Thumbs.db
+
+# prisma local sqlite (if used)
+prisma/*.db
+prisma/*.db-journal
+
+# Local media CDN storage
+storage/
+!storage/.gitkeep
+
+# Square Cloud TLS certificates (never commit)
+src/databases/**/certificates/*.pem
+src/databases/**/certificates/*.key
+src/databases/**/certificates/*.crt
+src/databases/**/certificates/*.p12
+!src/databases/**/certificates/.gitkeep
+
+# Legacy path
+certs/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# typescript
+*.tsbuildinfo

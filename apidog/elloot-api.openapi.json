@@ -1,0 +1,1192 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Elloot API",
+    "description": "Marketplace API (escrow). Import this file in Apidog: Import → OpenAPI.\n\nAuth: use `Authorization: Bearer <accessToken>` from register/login.\nSandbox flow: create order → checkout → POST /payments/sandbox/confirm → deliver → confirm.",
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5000",
+      "description": "Local (.env.local PORT=5000)"
+    },
+    {
+      "url": "http://localhost:3333",
+      "description": "Local default (.env.example)"
+    }
+  ],
+  "tags": [
+    { "name": "Health" },
+    { "name": "Auth" },
+    { "name": "Catalog" },
+    { "name": "Listings" },
+    { "name": "Orders" },
+    { "name": "Payments" },
+    { "name": "Wallet" },
+    { "name": "Conversations" },
+    { "name": "Disputes" },
+    { "name": "Jobs" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT accessToken from /api/auth/register or /api/auth/login"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string", "example": "UNAUTHORIZED" },
+              "message": { "type": "string", "example": "Unauthorized" }
+            }
+          }
+        }
+      },
+      "UserPublic": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "name": { "type": "string", "nullable": true },
+          "avatarUrl": { "type": "string", "nullable": true },
+          "role": {
+            "type": "string",
+            "enum": ["BUYER", "SELLER", "ADMIN"]
+          },
+          "kycStatus": {
+            "type": "string",
+            "enum": ["NONE", "PENDING", "APPROVED", "REJECTED"]
+          },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "required": ["user", "accessToken"],
+        "properties": {
+          "user": { "$ref": "#/components/schemas/UserPublic" },
+          "accessToken": { "type": "string" }
+        }
+      },
+      "RegisterBody": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 8, "maxLength": 72 },
+          "name": { "type": "string", "minLength": 2, "maxLength": 80 }
+        }
+      },
+      "LoginBody": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 1 }
+        }
+      },
+      "CreateListingBody": {
+        "type": "object",
+        "required": ["categoryId", "title", "description", "priceCents"],
+        "properties": {
+          "categoryId": { "type": "string" },
+          "title": { "type": "string", "minLength": 5, "maxLength": 120 },
+          "description": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 5000
+          },
+          "priceCents": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50000000,
+            "example": 5000
+          },
+          "mediaUrls": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string", "format": "uri" },
+            "default": []
+          },
+          "publish": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, listing is created as ACTIVE"
+          }
+        }
+      },
+      "UpdateListingBody": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "categoryId": { "type": "string" },
+          "title": { "type": "string", "minLength": 5, "maxLength": 120 },
+          "description": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 5000
+          },
+          "priceCents": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50000000
+          },
+          "mediaUrls": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string", "format": "uri" }
+          }
+        }
+      },
+      "CreateOrderBody": {
+        "type": "object",
+        "required": ["listingId"],
+        "properties": {
+          "listingId": { "type": "string" }
+        }
+      },
+      "SandboxConfirmBody": {
+        "type": "object",
+        "required": ["providerRef"],
+        "properties": {
+          "providerRef": {
+            "type": "string",
+            "description": "From checkout.providerRef (e.g. sandbox_<orderId>)",
+            "example": "sandbox_cmsXXXX"
+          }
+        }
+      },
+      "Checkout": {
+        "type": "object",
+        "properties": {
+          "provider": { "type": "string", "example": "sandbox" },
+          "providerRef": { "type": "string" },
+          "amountCents": { "type": "integer" },
+          "status": { "type": "string" }
+        }
+      },
+      "WalletLedgerEntry": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": [
+              "CREDIT_SALE",
+              "DEBIT_PAYOUT",
+              "PLATFORM_FEE",
+              "REFUND",
+              "ADJUSTMENT"
+            ]
+          },
+          "amountCents": { "type": "integer" },
+          "balanceAfter": { "type": "integer" },
+          "description": { "type": "string", "nullable": true },
+          "orderId": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "API root",
+        "operationId": "getRoot",
+        "responses": {
+          "200": {
+            "description": "Service info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "version": { "type": "string" },
+                    "docs": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check (DB + Redis)",
+        "operationId": "getHealth",
+        "responses": {
+          "200": { "description": "Healthy" },
+          "503": { "description": "DB down" }
+        }
+      }
+    },
+    "/api/health/live": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Liveness probe",
+        "operationId": "getHealthLive",
+        "responses": {
+          "200": { "description": "Alive" }
+        }
+      }
+    },
+    "/api/auth/providers": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Enabled auth providers",
+        "operationId": "getAuthProviders",
+        "responses": {
+          "200": {
+            "description": "Provider flags",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "providers": {
+                      "type": "object",
+                      "properties": {
+                        "email": { "type": "boolean" },
+                        "google": { "type": "boolean" },
+                        "discord": { "type": "boolean" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register with email/password",
+        "operationId": "register",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterBody" },
+              "example": {
+                "email": "seller@elloot.test",
+                "password": "password123",
+                "name": "Seller"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuthResponse" }
+              }
+            }
+          },
+          "409": {
+            "description": "Email taken",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login with email/password",
+        "operationId": "login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginBody" },
+              "example": {
+                "email": "seller@elloot.test",
+                "password": "password123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuthResponse" }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Current user",
+        "operationId": "getMe",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Current user profile" },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Auth"],
+        "summary": "Update profile (name, avatarUrl, pixKey)",
+        "operationId": "patchMe",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "nullable": true },
+                  "avatarUrl": {
+                    "type": "string",
+                    "format": "uri",
+                    "nullable": true
+                  },
+                  "pixKey": { "type": "string", "nullable": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Updated profile" } }
+      }
+    },
+    "/api/auth/google": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Start Google OAuth (redirect)",
+        "operationId": "googleAuth",
+        "responses": {
+          "302": { "description": "Redirect to Google" }
+        }
+      }
+    },
+    "/api/auth/google/callback": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Google OAuth callback",
+        "operationId": "googleCallback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Use `json` to return tokens as JSON instead of frontend redirect",
+            "schema": { "type": "string", "enum": ["json"] }
+          }
+        ],
+        "responses": {
+          "200": { "description": "JSON auth result when format=json" },
+          "302": { "description": "Redirect to frontend with token" }
+        }
+      }
+    },
+    "/api/auth/discord": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Start Discord OAuth (redirect)",
+        "operationId": "discordAuth",
+        "responses": {
+          "302": { "description": "Redirect to Discord" }
+        }
+      }
+    },
+    "/api/auth/discord/callback": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Discord OAuth callback",
+        "operationId": "discordCallback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["json"] }
+          }
+        ],
+        "responses": {
+          "200": { "description": "JSON auth result when format=json" },
+          "302": { "description": "Redirect to frontend with token" }
+        }
+      }
+    },
+    "/api/catalog/games": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "List active games + categories",
+        "operationId": "listGames",
+        "responses": {
+          "200": {
+            "description": "Games with categories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "games": { "type": "array", "items": { "type": "object" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/catalog/listings": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "Public ACTIVE listings (filters + cursor)",
+        "operationId": "listCatalogListings",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 20, "maximum": 50 }
+          },
+          {
+            "name": "game",
+            "in": "query",
+            "description": "Game id or slug",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Category id or slug",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "minPriceCents",
+            "in": "query",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "maxPriceCents",
+            "in": "query",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Listings + nextCursor" }
+        }
+      }
+    },
+    "/api/listings": {
+      "post": {
+        "tags": ["Listings"],
+        "summary": "Create listing (promotes BUYER → SELLER)",
+        "operationId": "createListing",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateListingBody" },
+              "example": {
+                "categoryId": "cmsXXXX",
+                "title": "Conta VIP Rank Diamante",
+                "description": "Conta completa com skins e rank diamante, entrega imediata após pagamento.",
+                "priceCents": 5000,
+                "mediaUrls": [],
+                "publish": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Listing created" },
+          "404": { "description": "Category not found" }
+        }
+      }
+    },
+    "/api/listings/mine": {
+      "get": {
+        "tags": ["Listings"],
+        "summary": "My listings (seller)",
+        "operationId": "listMyListings",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Seller listings" }
+        }
+      }
+    },
+    "/api/listings/{id}": {
+      "get": {
+        "tags": ["Listings"],
+        "summary": "Get listing by id",
+        "operationId": "getListing",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Listing" },
+          "404": { "description": "Not found" }
+        }
+      },
+      "patch": {
+        "tags": ["Listings"],
+        "summary": "Update own listing",
+        "operationId": "updateListing",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateListingBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated" },
+          "403": { "description": "Forbidden" },
+          "409": { "description": "Already sold" }
+        }
+      },
+      "delete": {
+        "tags": ["Listings"],
+        "summary": "Soft-delete listing (REMOVED)",
+        "operationId": "deleteListing",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Marked REMOVED" }
+        }
+      }
+    },
+    "/api/listings/{id}/publish": {
+      "post": {
+        "tags": ["Listings"],
+        "summary": "Publish listing (ACTIVE)",
+        "operationId": "publishListing",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Published" }
+        }
+      }
+    },
+    "/api/listings/{id}/pause": {
+      "post": {
+        "tags": ["Listings"],
+        "summary": "Pause ACTIVE listing",
+        "operationId": "pauseListing",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Paused" },
+          "409": { "description": "Invalid status" }
+        }
+      }
+    },
+    "/api/orders": {
+      "post": {
+        "tags": ["Orders"],
+        "summary": "Create order + sandbox checkout",
+        "operationId": "createOrder",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateOrderBody" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Order + checkout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "order": { "type": "object" },
+                    "checkout": { "$ref": "#/components/schemas/Checkout" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders/mine": {
+      "get": {
+        "tags": ["Orders"],
+        "summary": "My orders (buyer or seller)",
+        "operationId": "listMyOrders",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Orders" }
+        }
+      }
+    },
+    "/api/orders/{id}": {
+      "get": {
+        "tags": ["Orders"],
+        "summary": "Get order by id",
+        "operationId": "getOrder",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Order" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/api/orders/{id}/checkout": {
+      "post": {
+        "tags": ["Orders"],
+        "summary": "Create/refresh sandbox checkout",
+        "operationId": "orderCheckout",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Checkout payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": { "$ref": "#/components/schemas/Checkout" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders/{id}/deliver": {
+      "post": {
+        "tags": ["Orders"],
+        "summary": "Seller marks order as DELIVERED",
+        "operationId": "deliverOrder",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Order delivered" },
+          "403": { "description": "Not the seller" },
+          "409": { "description": "Invalid status" }
+        }
+      }
+    },
+    "/api/orders/{id}/confirm": {
+      "post": {
+        "tags": ["Orders"],
+        "summary": "Buyer confirms receipt (releases escrow → wallet)",
+        "operationId": "confirmOrder",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Order COMPLETED + seller credited" },
+          "403": { "description": "Not the buyer" },
+          "409": { "description": "Invalid status" }
+        }
+      }
+    },
+    "/api/payments/sandbox/confirm": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Sandbox: simulate payment paid (buyer JWT)",
+        "operationId": "sandboxConfirm",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SandboxConfirmBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Payment confirmed" }
+        }
+      }
+    },
+    "/api/payments/sandbox/webhook": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Sandbox webhook (no JWT, service context)",
+        "operationId": "sandboxWebhook",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SandboxConfirmBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Webhook received" }
+        }
+      }
+    },
+    "/api/payments/sandbox/confirm-admin": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Sandbox confirm as ADMIN",
+        "operationId": "sandboxConfirmAdmin",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SandboxConfirmBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Confirmed" },
+          "403": { "description": "Admin only" }
+        }
+      }
+    },
+    "/api/wallet": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "My wallet balance + ledger (read-only)",
+        "description": "No write routes. Ledger is append-only at DB level.",
+        "operationId": "getWallet",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Balance and recent entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "balanceCents": { "type": "integer", "example": 4500 },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WalletLedgerEntry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wallet/{userId}": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Balance for user (self or ADMIN)",
+        "operationId": "getWalletByUser",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Balance only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "balanceCents": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api/orders/{id}/cancel": {
+      "post": {
+        "tags": ["Orders"],
+        "summary": "Buyer cancels PENDING_PAYMENT order",
+        "operationId": "cancelOrder",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Cancelled" },
+          "409": { "description": "Not pending" }
+        }
+      }
+    },
+    "/api/conversations": {
+      "get": {
+        "tags": ["Conversations"],
+        "summary": "My conversations",
+        "operationId": "listConversations",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Conversations" } }
+      }
+    },
+    "/api/conversations/by-order/{orderId}": {
+      "get": {
+        "tags": ["Conversations"],
+        "summary": "Conversation by order id",
+        "operationId": "getConversationByOrder",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "Conversation" } }
+      }
+    },
+    "/api/conversations/{id}": {
+      "get": {
+        "tags": ["Conversations"],
+        "summary": "Get conversation",
+        "operationId": "getConversation",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "Conversation" } }
+      }
+    },
+    "/api/conversations/{id}/messages": {
+      "get": {
+        "tags": ["Conversations"],
+        "summary": "List messages",
+        "operationId": "listMessages",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 50 }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "Messages" } }
+      },
+      "post": {
+        "tags": ["Conversations"],
+        "summary": "Send message",
+        "operationId": "sendMessage",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["body"],
+                "properties": {
+                  "body": { "type": "string", "minLength": 1, "maxLength": 4000 }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/api/disputes": {
+      "post": {
+        "tags": ["Disputes"],
+        "summary": "Open dispute on PAID/DELIVERED order",
+        "operationId": "openDispute",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["orderId", "reason"],
+                "properties": {
+                  "orderId": { "type": "string" },
+                  "reason": { "type": "string", "minLength": 10 }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Opened" } }
+      }
+    },
+    "/api/disputes/mine": {
+      "get": {
+        "tags": ["Disputes"],
+        "summary": "My disputes",
+        "operationId": "listMyDisputes",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Disputes" } }
+      }
+    },
+    "/api/disputes/{id}": {
+      "get": {
+        "tags": ["Disputes"],
+        "summary": "Get dispute",
+        "operationId": "getDispute",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "Dispute" } }
+      }
+    },
+    "/api/disputes/{id}/resolve": {
+      "post": {
+        "tags": ["Disputes"],
+        "summary": "Resolve dispute (ADMIN)",
+        "operationId": "resolveDispute",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["resolution"],
+                "properties": {
+                  "resolution": {
+                    "type": "string",
+                    "enum": ["RELEASE_TO_SELLER", "REFUND_BUYER", "PARTIAL"]
+                  },
+                  "notes": { "type": "string" },
+                  "sellerAmountCents": {
+                    "type": "integer",
+                    "description": "Required for PARTIAL"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Resolved" } }
+      }
+    },
+    "/api/jobs/expire-checkouts": {
+      "post": {
+        "tags": ["Jobs"],
+        "summary": "Expire PENDING_PAYMENT past expiresAt",
+        "operationId": "expireCheckouts",
+        "description": "Header x-job-secret or ADMIN JWT",
+        "parameters": [
+          {
+            "name": "x-job-secret",
+            "in": "header",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "expired count" } }
+      }
+    },
+    "/api/jobs/auto-release-escrow": {
+      "post": {
+        "tags": ["Jobs"],
+        "summary": "Auto-release escrow past releaseAt",
+        "operationId": "autoReleaseEscrow",
+        "parameters": [
+          {
+            "name": "x-job-secret",
+            "in": "header",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "released count" } }
+      }
+    },
+    "/api/jobs/run": {
+      "post": {
+        "tags": ["Jobs"],
+        "summary": "Run expire + auto-release",
+        "operationId": "runJobs",
+        "parameters": [
+          {
+            "name": "x-job-secret",
+            "in": "header",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "Job results" } }
+      }
+    }
+  }
+}

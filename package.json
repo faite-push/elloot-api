@@ -1,0 +1,58 @@
+{
+  "name": "elloot-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Elloot marketplace API — Express + Prisma",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "nodemon",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "db:secure": "prisma db execute --file prisma/sql/001_security_rls.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/002_wallet_security_definer.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/003_listing_select_order_participants.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/004_media_assets_rls.sql --schema prisma/schema.prisma",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:e2e": "tsx scripts/e2e-flow.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1104.0",
+    "@aws-sdk/s3-request-presigner": "^3.1104.0",
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "ioredis": "^6.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.11.0",
+    "multer": "^2.2.0",
+    "sanitize-html": "^2.17.5",
+    "sharp": "^0.35.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/morgan": "^1.9.10",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^26.1.2",
+    "@types/sanitize-html": "^2.16.1",
+    "nodemon": "^3.1.14",
+    "prisma": "^6.19.3",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}
