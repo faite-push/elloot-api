@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { env } from "../../config/env";
 import { AppError } from "../../lib/errors";
 import {
@@ -7,6 +8,10 @@ import {
 } from "../../databases";
 
 const PROVIDER = "sandbox";
+
+export function newSandboxProviderRef(orderId: string) {
+  return `sandbox_${orderId}_${randomBytes(16).toString("hex")}`;
+}
 
 export async function createSandboxPayment(
   orderId: string,
@@ -32,7 +37,7 @@ export async function createSandboxPayment(
       );
     }
 
-    const providerRef = `sandbox_${order.id}`;
+    const providerRef = newSandboxProviderRef(order.id);
     const payment = await tx.payment.create({
       data: {
         orderId: order.id,
@@ -64,15 +69,21 @@ function formatSandboxCheckout(
     expiresAt,
     pixCopyPaste: `ELLOOT-SANDBOX-${providerRef}-${amountCents}`,
     instructions:
-      "Sandbox: call POST /api/payments/sandbox/confirm with this providerRef to simulate a paid PIX.",
+      "Sandbox: call POST /api/payments/sandbox/confirm (authenticated) with this providerRef to simulate a paid PIX.",
   };
 }
 
 export async function confirmSandboxPayment(
   providerRef: string,
   actor?: RlsActor | null,
+  options?: { viaWebhook?: boolean },
 ) {
   return withServiceTransaction(async (tx) => {
+    // Unauthenticated confirm is only allowed through the secured webhook path.
+    if (!actor && !options?.viaWebhook) {
+      throw new AppError(401, "Authentication required", "UNAUTHORIZED");
+    }
+
     const paymentRows = await tx.$queryRaw<
       {
         id: string;
@@ -114,7 +125,7 @@ export async function confirmSandboxPayment(
         status: "PAID",
         rawWebhook: {
           provider: PROVIDER,
-          event: "payment.paid",
+          event: options?.viaWebhook ? "webhook.paid" : "payment.paid",
           providerRef,
           at: new Date().toISOString(),
         },
@@ -140,7 +151,9 @@ export async function confirmSandboxPayment(
 
     await tx.auditLog.create({
       data: {
-        action: "payment.sandbox.paid",
+        action: options?.viaWebhook
+          ? "payment.sandbox.webhook.paid"
+          : "payment.sandbox.paid",
         entityType: "Order",
         entityId: payment.orderId,
         meta: { providerRef },

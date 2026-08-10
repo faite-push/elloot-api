@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { Category, Prisma } from "@prisma/client";
 import { withRlsTransaction } from "../../databases";
 import { asyncHandler } from "../../lib/async-handler";
@@ -183,7 +185,130 @@ catalogRouter.get(
   }),
 );
 
-/** Flat list of mid-level / leaf categories useful for chips & carousels. */
+/**
+ * Taxonomy for /sell (3 progressive selects):
+ * 1) Categoria — Jogos + cada vertical de Outros (Redes Sociais, IA, Assinaturas…)
+ * 2) Categoria principal — jogos OU itens da vertical
+ * 3) Subcategoria — seções (Contas, Diamantes…), quando existirem
+ */
+catalogRouter.get(
+  "/categories/listing",
+  asyncHandler(async (_req, res) => {
+    const rows = await withRlsTransaction({ actor: null }, (tx) =>
+      tx.category.findMany({
+        where: { status: "ACTIVE" },
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        select: categoryPublicSelect,
+      }),
+    );
+
+    const byParent = new Map<string | null, CategoryRow[]>();
+    for (const row of rows) {
+      const list = byParent.get(row.parentId) ?? [];
+      list.push(row);
+      byParent.set(row.parentId, list);
+    }
+
+    function nest(parentId: string): SerializedCategory[] {
+      return (byParent.get(parentId) ?? []).map((row) => {
+        const kids = nest(row.id);
+        return serializeCategory(row, kids.length ? kids : undefined);
+      });
+    }
+
+    const roots = byParent.get(null) ?? [];
+    const sellRoots: SerializedCategory[] = [];
+
+    for (const root of roots) {
+      const mid = byParent.get(root.id) ?? [];
+
+      // "Jogos" (e similares): um grupo L1 com jogos em L2 e seções em L3
+      if (root.slug === "jogos" || mid.length > 20) {
+        sellRoots.push(
+          serializeCategory(
+            root,
+            mid.map((m) => {
+              const sections = nest(m.id);
+              return serializeCategory(m, sections.length ? sections : undefined);
+            }),
+          ),
+        );
+        continue;
+      }
+
+      // "Outros": promove cada filho a categoria L1 (Redes Sociais, IA, Discord…)
+      if (root.slug === "outros" || root.slug === "other" || root.slug === "others") {
+        for (const vertical of mid) {
+          const main = nest(vertical.id);
+          sellRoots.push(
+            serializeCategory(
+              vertical,
+              main.length ? main : undefined,
+            ),
+          );
+        }
+        continue;
+      }
+
+      // Qualquer outro root: mantém com filhos aninhados
+      sellRoots.push(
+        serializeCategory(
+          root,
+          mid.map((m) => {
+            const sections = nest(m.id);
+            return serializeCategory(m, sections.length ? sections : undefined);
+          }),
+        ),
+      );
+    }
+
+    sellRoots.sort((a, b) => {
+      if (a.slug === "jogos") return -1;
+      if (b.slug === "jogos") return 1;
+      return a.name.localeCompare(b.name, "pt-BR");
+    });
+
+    res.json({ success: true, categories: sellRoots });
+  }),
+);
+
+/** Configurable product kinds for the sell form ("O que você está vendendo?"). */
+catalogRouter.get(
+  "/product-types",
+  asyncHandler(async (_req, res) => {
+    const file = path.join(
+      process.cwd(),
+      "prisma",
+      "data",
+      "product-types.json",
+    );
+    let types: Array<{ value: string; label: string; sortOrder?: number }> = [];
+    try {
+      const raw = JSON.parse(readFileSync(file, "utf8")) as unknown;
+      if (Array.isArray(raw)) types = raw as typeof types;
+    } catch {
+      types = [
+        { value: "SERVICO", label: "Serviço", sortOrder: 0 },
+        { value: "CONTA", label: "Conta", sortOrder: 1 },
+        { value: "GOLD", label: "Gold", sortOrder: 2 },
+        { value: "ITEM", label: "Item", sortOrder: 3 },
+        { value: "OUTROS", label: "Outros", sortOrder: 4 },
+      ];
+    }
+
+    const productTypes = [...types]
+      .filter((t) => t?.value && t?.label)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      .map((t) => ({
+        value: String(t.value),
+        label: String(t.label),
+      }));
+
+    res.json({ success: true, productTypes });
+  }),
+);
+
+/** Flat list of mid-level categories (children of roots), or children of a given parent. */
 catalogRouter.get(
   "/categories/flat",
   asyncHandler(async (req, res) => {
@@ -211,7 +336,10 @@ catalogRouter.get(
           status: "ACTIVE",
           ...(parentId
             ? { parentId }
-            : { parentId: { not: null } }),
+            : {
+                // Mid-level only: parent is a root (Jogos / Outros), not sections
+                parent: { parentId: null, status: "ACTIVE" },
+              }),
           ...(featuredOnly ? { isFeatured: true } : {}),
           ...(menuOnly ? { showInMenu: true } : {}),
         },
@@ -310,6 +438,9 @@ catalogRouter.get(
           title: true,
           priceCents: true,
           status: true,
+          listingModel: true,
+          deliveryMode: true,
+          productType: true,
           createdAt: true,
           category: {
             select: {
@@ -333,8 +464,11 @@ catalogRouter.get(
           },
           media: {
             orderBy: { sortOrder: "asc" },
-            take: 1,
+            take: 4,
             select: { url: true },
+          },
+          _count: {
+            select: { media: true },
           },
           seller: {
             select: { id: true, name: true },
@@ -346,6 +480,12 @@ catalogRouter.get(
     const nextCursor =
       listings.length === take ? listings[listings.length - 1]?.id : null;
 
-    res.json({ listings, nextCursor });
+    res.json({
+      listings: listings.map(({ _count, ...listing }) => ({
+        ...listing,
+        mediaCount: _count.media,
+      })),
+      nextCursor,
+    });
   }),
 );

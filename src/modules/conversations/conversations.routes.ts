@@ -1,19 +1,18 @@
 import { Router } from "express";
 import { z } from "zod";
-import {
-  withRlsTransaction,
-  type RlsActor,
-} from "../../databases";
 import { asyncHandler } from "../../lib/async-handler";
 import { AppError } from "../../lib/errors";
 import { routeParam } from "../../lib/route-param";
-import { sanitizeUserText } from "../../lib/sanitize";
 import { requireAuth } from "../../middleware/auth";
+import { withRlsTransaction, type RlsActor } from "../../databases";
+import { isUserOnline } from "../../realtime/presence";
+import { sendConversationMessage } from "./conversations.service";
 
 export const conversationsRouter = Router();
 
 const sendSchema = z.object({
   body: z.string().trim().min(1).max(4000),
+  clientId: z.string().trim().min(8).max(64).optional(),
 });
 
 function actorOf(req: { user?: RlsActor }): RlsActor {
@@ -23,6 +22,8 @@ function actorOf(req: { user?: RlsActor }): RlsActor {
 const conversationSelect = {
   id: true,
   orderId: true,
+  lastMessageAt: true,
+  lastMessagePreview: true,
   createdAt: true,
   updatedAt: true,
   order: {
@@ -39,6 +40,43 @@ const conversationSelect = {
   },
 } as const;
 
+const messageSelect = {
+  id: true,
+  conversationId: true,
+  body: true,
+  senderId: true,
+  clientId: true,
+  readAt: true,
+  createdAt: true,
+  sender: { select: { id: true, name: true } },
+} as const;
+
+async function assertConversationParty(
+  actor: RlsActor,
+  conversationId: string,
+) {
+  const conversation = await withRlsTransaction({ actor }, (tx) =>
+    tx.conversation.findUnique({
+      where: { id: conversationId },
+      include: {
+        order: { select: { status: true, buyerId: true, sellerId: true } },
+      },
+    }),
+  );
+  if (!conversation) {
+    throw new AppError(404, "Conversation not found", "CONVERSATION_NOT_FOUND");
+  }
+  const { order } = conversation;
+  const isParty =
+    order.buyerId === actor.id ||
+    order.sellerId === actor.id ||
+    actor.role === "ADMIN";
+  if (!isParty) {
+    throw new AppError(403, "Forbidden", "FORBIDDEN");
+  }
+  return conversation;
+}
+
 conversationsRouter.get(
   "/",
   requireAuth,
@@ -51,7 +89,7 @@ conversationsRouter.get(
             OR: [{ buyerId: actor.id }, { sellerId: actor.id }],
           },
         },
-        orderBy: { updatedAt: "desc" },
+        orderBy: [{ lastMessageAt: "desc" }, { updatedAt: "desc" }],
         take: 50,
         select: {
           ...conversationSelect,
@@ -87,6 +125,13 @@ conversationsRouter.get(
     if (!conversation) {
       throw new AppError(404, "Conversation not found", "CONVERSATION_NOT_FOUND");
     }
+    const isParty =
+      conversation.order.buyerId === actor.id ||
+      conversation.order.sellerId === actor.id ||
+      actor.role === "ADMIN";
+    if (!isParty) {
+      throw new AppError(403, "Forbidden", "FORBIDDEN");
+    }
     res.json({ conversation });
   }),
 );
@@ -97,16 +142,24 @@ conversationsRouter.get(
   asyncHandler(async (req, res) => {
     const actor = actorOf(req);
     const id = routeParam(req.params.id);
+    await assertConversationParty(actor, id);
     const conversation = await withRlsTransaction({ actor }, (tx) =>
       tx.conversation.findUnique({
         where: { id },
         select: conversationSelect,
       }),
     );
-    if (!conversation) {
-      throw new AppError(404, "Conversation not found", "CONVERSATION_NOT_FOUND");
-    }
-    res.json({ conversation });
+    res.json({
+      conversation: {
+        ...conversation,
+        partiesOnline: conversation
+          ? {
+              buyer: isUserOnline(conversation.order.buyerId),
+              seller: isUserOnline(conversation.order.sellerId),
+            }
+          : undefined,
+      },
+    });
   }),
 );
 
@@ -116,33 +169,33 @@ conversationsRouter.get(
   asyncHandler(async (req, res) => {
     const actor = actorOf(req);
     const id = routeParam(req.params.id);
-    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
-    const take = Math.min(Number(req.query.limit) || 50, 100);
+    await assertConversationParty(actor, id);
 
-    const messages = await withRlsTransaction({ actor }, async (tx) => {
-      const conversation = await tx.conversation.findUnique({ where: { id } });
-      if (!conversation) {
-        throw new AppError(404, "Conversation not found", "CONVERSATION_NOT_FOUND");
-      }
+    const after =
+      typeof req.query.after === "string" && req.query.after.length > 0
+        ? req.query.after
+        : undefined;
+    const take = Math.min(Number(req.query.limit) || 80, 120);
 
-      return tx.message.findMany({
-        where: { conversationId: id },
+    const messages = await withRlsTransaction({ actor }, (tx) =>
+      tx.message.findMany({
+        where: {
+          conversationId: id,
+          ...(after ? { createdAt: { gt: new Date(after) } } : {}),
+        },
         orderBy: { createdAt: "asc" },
         take,
-        ...(cursor
-          ? { skip: 1, cursor: { id: cursor } }
-          : {}),
-        select: {
-          id: true,
-          body: true,
-          senderId: true,
-          createdAt: true,
-          sender: { select: { id: true, name: true } },
-        },
-      });
-    });
+        select: messageSelect,
+      }),
+    );
 
-    res.json({ messages });
+    res.json({
+      messages,
+      nextCursor:
+        messages.length === take
+          ? (messages[messages.length - 1]?.id ?? null)
+          : null,
+    });
   }),
 );
 
@@ -153,53 +206,14 @@ conversationsRouter.post(
     const actor = actorOf(req);
     const id = routeParam(req.params.id);
     const parsed = sendSchema.parse(req.body);
-    const body = sanitizeUserText(parsed.body, 4000);
-    if (!body) {
-      throw new AppError(400, "Message body is required", "VALIDATION_ERROR");
-    }
 
-    const message = await withRlsTransaction({ actor }, async (tx) => {
-      const conversation = await tx.conversation.findUnique({
-        where: { id },
-        include: { order: { select: { status: true, buyerId: true, sellerId: true } } },
-      });
-      if (!conversation) {
-        throw new AppError(404, "Conversation not found", "CONVERSATION_NOT_FOUND");
-      }
-
-      const { order } = conversation;
-      const isParty =
-        order.buyerId === actor.id ||
-        order.sellerId === actor.id ||
-        actor.role === "ADMIN";
-      if (!isParty) {
-        throw new AppError(403, "Forbidden", "FORBIDDEN");
-      }
-
-      const closed = ["COMPLETED", "REFUNDED", "CANCELLED", "EXPIRED"].includes(
-        order.status,
-      );
-      if (closed && actor.role !== "ADMIN") {
-        throw new AppError(409, "Conversation is closed", "CONVERSATION_CLOSED");
-      }
-
-      // Participants may INSERT messages (RLS); conversation UPDATE is service-only.
-      return tx.message.create({
-        data: {
-          conversationId: id,
-          senderId: actor.id,
-          body,
-        },
-        select: {
-          id: true,
-          body: true,
-          senderId: true,
-          createdAt: true,
-          sender: { select: { id: true, name: true } },
-        },
-      });
+    const { message, created } = await sendConversationMessage({
+      conversationId: id,
+      body: parsed.body,
+      clientId: parsed.clientId,
+      actor,
     });
 
-    res.status(201).json({ message });
+    res.status(created ? 201 : 200).json({ message });
   }),
 );

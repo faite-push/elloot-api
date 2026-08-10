@@ -75,12 +75,42 @@ async function main() {
   const catalog = await req("GET", "/api/catalog/categories");
   const roots = catalog.categories as Array<{
     slug: string;
-    children?: Array<{ id: string; slug: string }>;
+    children?: Array<{
+      id: string;
+      slug: string;
+      children?: Array<{ id: string; slug: string }>;
+    }>;
   }>;
-  const categoryId = roots[0]?.children?.[0]?.id;
-  const categorySlug = roots[0]?.children?.[0]?.slug ?? roots[0]?.slug;
-  if (!categoryId) throw new Error("No category from seed");
-  step(`Category ${categoryId}`);
+
+  function findLeaf(
+    nodes: Array<{
+      id?: string;
+      slug: string;
+      children?: Array<{ id: string; slug: string; children?: unknown[] }>;
+    }>,
+  ): { id: string; slug: string } | null {
+    for (const node of nodes) {
+      if (node.children?.length) {
+        const nested = findLeaf(
+          node.children as Array<{
+            id: string;
+            slug: string;
+            children?: unknown[];
+          }>,
+        );
+        if (nested) return nested;
+      } else if (node.id) {
+        return { id: node.id, slug: node.slug };
+      }
+    }
+    return null;
+  }
+
+  const leaf = findLeaf(roots);
+  const categoryId = leaf?.id;
+  const categorySlug = leaf?.slug ?? roots[0]?.slug;
+  if (!categoryId) throw new Error("No leaf category from seed");
+  step(`Category leaf ${categoryId}`);
 
   const filtered = await req(
     "GET",

@@ -272,6 +272,8 @@ export async function upsertOAuthUser(profile: OAuthProfile) {
         name: safeName,
         avatarUrl: profile.avatarUrl,
         role: "BUYER",
+        emailVerifiedAt: new Date(),
+        lastSeenAt: new Date(),
         accounts: {
           create: {
             provider: profile.provider,

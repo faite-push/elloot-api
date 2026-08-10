@@ -21,6 +21,8 @@ const envSchema = z.object({
   PLATFORM_FEE_BPS: z.coerce.number().int().min(0).max(10_000).default(1000),
   ESCROW_AUTO_RELEASE_HOURS: z.coerce.number().int().positive().default(48),
   PAYMENT_PROVIDER: z.enum(["sandbox"]).default("sandbox"),
+  /** Required for POST /api/payments/sandbox/webhook. Empty = webhook disabled. */
+  SANDBOX_WEBHOOK_SECRET: z.string().optional(),
   CHECKOUT_RESERVE_SECONDS: z.coerce.number().int().positive().default(900),
   JOB_SECRET: z.string().optional(),
   JOB_POLL_MS: z.coerce.number().int().min(0).default(60_000),

@@ -202,7 +202,12 @@ mediaRouter.get(
 
     res.setHeader("Content-Type", type);
     res.setHeader("Content-Length", String(body.byteLength));
-    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.setHeader(
+      "Cache-Control",
+      asset.visibility === "PUBLIC"
+        ? "public, max-age=31536000, immutable"
+        : "private, no-store",
+    );
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Disposition", "inline");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");

@@ -17,6 +17,7 @@ export const ordersRouter = Router();
 
 const createOrderSchema = z.object({
   listingId: z.string().min(1),
+  offerId: z.string().min(1).optional(),
 });
 
 const orderSelect = {
@@ -24,6 +25,7 @@ const orderSelect = {
   status: true,
   amountCents: true,
   feeCents: true,
+  offerId: true,
   paidAt: true,
   deliveredAt: true,
   completedAt: true,
@@ -39,6 +41,13 @@ const orderSelect = {
         orderBy: { sortOrder: "asc" as const },
         select: { url: true },
       },
+    },
+  },
+  offer: {
+    select: {
+      id: true,
+      title: true,
+      priceCents: true,
     },
   },
   buyer: { select: { id: true, name: true, email: true } },
@@ -60,6 +69,18 @@ const orderSelect = {
     },
   },
   conversation: { select: { id: true } },
+  dispute: {
+    select: {
+      id: true,
+      openedById: true,
+      reason: true,
+      status: true,
+      resolution: true,
+      notes: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
 } as const;
 
 function actorOf(req: { user?: RlsActor }): RlsActor {
@@ -74,6 +95,7 @@ ordersRouter.post(
     const actor = actorOf(req);
     const order = await createOrderFromListing({
       listingId: body.listingId,
+      offerId: body.offerId,
       buyerId: actor.id,
       actor,
     });

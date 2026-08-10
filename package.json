@@ -12,7 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
-    "db:secure": "prisma db execute --file prisma/sql/001_security_rls.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/002_wallet_security_definer.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/003_listing_select_order_participants.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/004_media_assets_rls.sql --schema prisma/schema.prisma",
+    "db:secure": "prisma db execute --file prisma/sql/001_security_rls.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/002_wallet_security_definer.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/003_listing_select_order_participants.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/004_media_assets_rls.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/005_listing_offers_rls.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/006_orders_update_service_only.sql --schema prisma/schema.prisma",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:e2e": "tsx scripts/e2e-flow.ts"
   },
@@ -38,6 +38,7 @@
     "multer": "^2.2.0",
     "sanitize-html": "^2.17.5",
     "sharp": "^0.35.3",
+    "socket.io": "^4.8.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {

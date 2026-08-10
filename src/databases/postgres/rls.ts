@@ -86,6 +86,8 @@ export type LockedListing = {
   title: string;
   description: string;
   priceCents: number;
+  stockQuantity: number;
+  listingModel: string;
   status: string;
 };
 
@@ -94,9 +96,44 @@ export async function lockListingForUpdate(
   listingId: string,
 ): Promise<LockedListing | null> {
   const rows = await tx.$queryRaw<LockedListing[]>`
-    SELECT id, "sellerId", "categoryId", title, description, "priceCents", status::text AS status
+    SELECT
+      id,
+      "sellerId",
+      "categoryId",
+      title,
+      description,
+      "priceCents",
+      "stockQuantity",
+      "listingModel"::text AS "listingModel",
+      status::text AS status
     FROM listings
     WHERE id = ${listingId}
+    FOR UPDATE
+  `;
+  return rows[0] ?? null;
+}
+
+export type LockedOffer = {
+  id: string;
+  listingId: string;
+  title: string;
+  priceCents: number;
+  stockQuantity: number;
+};
+
+export async function lockOfferForUpdate(
+  tx: Prisma.TransactionClient,
+  offerId: string,
+): Promise<LockedOffer | null> {
+  const rows = await tx.$queryRaw<LockedOffer[]>`
+    SELECT
+      id,
+      "listingId",
+      title,
+      "priceCents",
+      "stockQuantity"
+    FROM listing_offers
+    WHERE id = ${offerId}
     FOR UPDATE
   `;
   return rows[0] ?? null;
@@ -105,6 +142,7 @@ export async function lockListingForUpdate(
 export type LockedOrder = {
   id: string;
   listingId: string;
+  offerId: string | null;
   buyerId: string;
   sellerId: string;
   amountCents: number;
@@ -117,7 +155,15 @@ export async function lockOrderForUpdate(
   orderId: string,
 ): Promise<LockedOrder | null> {
   const rows = await tx.$queryRaw<LockedOrder[]>`
-    SELECT id, "listingId", "buyerId", "sellerId", "amountCents", "feeCents", status::text AS status
+    SELECT
+      id,
+      "listingId",
+      "offerId",
+      "buyerId",
+      "sellerId",
+      "amountCents",
+      "feeCents",
+      status::text AS status
     FROM orders
     WHERE id = ${orderId}
     FOR UPDATE

@@ -10,7 +10,11 @@ import { sanitizeUserText } from "../../lib/sanitize";
 import { optionalAuth } from "../../middleware/optional-auth";
 import { requireAuth, signAccessToken } from "../../middleware/auth";
 import { createListingSchema, updateListingSchema } from "./listings.schemas";
-import { listingPublicSelect } from "./listings.shared";
+import {
+  assertLeafCategory,
+  resolveOwnedListingMedia,
+} from "./listings.media";
+import { listingPublicSelect, serializeListingPublic, aggregateSellerReviews, emptySellerReviewAgg, } from "./listings.shared";
 
 export const listingsRouter = Router();
 
@@ -45,12 +49,7 @@ listingsRouter.post(
 
     let promotedToSeller = false;
     const listing = await withRlsTransaction({ actor }, async (tx) => {
-      const category = await tx.category.findFirst({
-        where: { id: body.categoryId, status: "ACTIVE" },
-      });
-      if (!category) {
-        throw new AppError(404, "Category not found", "CATEGORY_NOT_FOUND");
-      }
+      await assertLeafCategory(tx, body.categoryId);
 
       if (actor.role === "BUYER") {
         await tx.user.update({
@@ -69,6 +68,11 @@ listingsRouter.post(
           ? Math.min(...offers.map((o) => o.priceCents))
           : body.priceCents!;
 
+      const mediaRows = await resolveOwnedListingMedia(tx, actor.id, {
+        mediaAssetIds: body.mediaAssetIds,
+        mediaUrls: body.mediaUrls,
+      });
+
       return tx.listing.create({
         data: {
           sellerId: actor.id,
@@ -79,12 +83,18 @@ listingsRouter.post(
           stockQuantity: body.stockQuantity ?? 1,
           productType: body.productType ?? null,
           listingModel,
+          deliveryMode:
+            listingModel === "DYNAMIC"
+              ? offers.some((o) => o.deliveryMode === "AUTO")
+                ? "AUTO"
+                : "MANUAL"
+              : (body.deliveryMode ?? "MANUAL"),
           status: body.publish ? "ACTIVE" : "DRAFT",
-          media: body.mediaUrls.length
+          media: mediaRows.length
             ? {
-                create: body.mediaUrls.map((url, index) => ({
-                  url,
-                  sortOrder: index,
+                create: mediaRows.map((row) => ({
+                  url: row.url,
+                  sortOrder: row.sortOrder,
                 })),
               }
             : undefined,
@@ -95,6 +105,7 @@ listingsRouter.post(
                     title: sanitizeUserText(offer.title, 120),
                     priceCents: offer.priceCents,
                     stockQuantity: offer.stockQuantity ?? 1,
+                    deliveryMode: offer.deliveryMode ?? "MANUAL",
                     sortOrder: index,
                   })),
                 }
@@ -139,7 +150,20 @@ listingsRouter.get(
       throw new AppError(404, "Listing not found", "LISTING_NOT_FOUND");
     }
 
-    res.json({ listing });
+    const reviewRows = await withRlsTransaction({ actor }, (tx) =>
+      tx.review.findMany({
+        where: { sellerId: listing.seller.id },
+        select: { rating: true },
+        take: 5000,
+      }),
+    ).catch(() => [] as Array<{ rating: number }>);
+
+    const reviewAgg =
+      reviewRows.length > 0
+        ? aggregateSellerReviews(reviewRows)
+        : emptySellerReviewAgg();
+
+    res.json({ listing: serializeListingPublic(listing, reviewAgg) });
   }),
 );
 
@@ -158,22 +182,21 @@ listingsRouter.patch(
       }
 
       if (body.categoryId) {
-        const category = await tx.category.findFirst({
-          where: { id: body.categoryId, status: "ACTIVE" },
-        });
-        if (!category) {
-          throw new AppError(404, "Category not found", "CATEGORY_NOT_FOUND");
-        }
+        await assertLeafCategory(tx, body.categoryId);
       }
 
-      if (body.mediaUrls) {
+      if (body.mediaAssetIds || body.mediaUrls) {
+        const mediaRows = await resolveOwnedListingMedia(tx, actor.id, {
+          mediaAssetIds: body.mediaAssetIds,
+          mediaUrls: body.mediaUrls,
+        });
         await tx.listingMedia.deleteMany({ where: { listingId: listing.id } });
-        if (body.mediaUrls.length) {
+        if (mediaRows.length) {
           await tx.listingMedia.createMany({
-            data: body.mediaUrls.map((url, index) => ({
+            data: mediaRows.map((row) => ({
               listingId: listing.id,
-              url,
-              sortOrder: index,
+              url: row.url,
+              sortOrder: row.sortOrder,
             })),
           });
         }

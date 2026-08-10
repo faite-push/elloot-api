@@ -149,7 +149,11 @@
         "type": "object",
         "required": ["listingId"],
         "properties": {
-          "listingId": { "type": "string" }
+          "listingId": { "type": "string" },
+          "offerId": {
+            "type": "string",
+            "description": "Required when listingModel is DYNAMIC"
+          }
         }
       },
       "SandboxConfirmBody": {

@@ -6,7 +6,9 @@ BEGIN;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'elloot_app') THEN
-    CREATE ROLE elloot_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT LOGIN PASSWORD 'elloot_app_dev';
+    -- Password MUST be set out-of-band (never commit secrets):
+    --   ALTER ROLE elloot_app PASSWORD '...';
+    CREATE ROLE elloot_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT LOGIN;
   END IF;
 END
 $$;
@@ -305,18 +307,8 @@ CREATE POLICY orders_insert ON orders FOR INSERT
 
 DROP POLICY IF EXISTS orders_update ON orders;
 CREATE POLICY orders_update ON orders FOR UPDATE
-  USING (
-    "buyerId" = app_current_user_id()
-    OR "sellerId" = app_current_user_id()
-    OR app_is_admin()
-    OR app_is_service()
-  )
-  WITH CHECK (
-    "buyerId" = app_current_user_id()
-    OR "sellerId" = app_current_user_id()
-    OR app_is_admin()
-    OR app_is_service()
-  );
+  USING (app_is_service() OR app_is_admin())
+  WITH CHECK (app_is_service() OR app_is_admin());
 
 DROP POLICY IF EXISTS payments_select ON payments;
 CREATE POLICY payments_select ON payments FOR SELECT

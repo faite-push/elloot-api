@@ -10,6 +10,9 @@ import {
   refundOrderTx,
   settlePartialOrderTx,
 } from "../orders/orders.lifecycle";
+import { routes } from "../conversations/hrefs";
+import { createNotification } from "../notifications/notifications.service";
+import { emitNotificationNew } from "../../realtime/emit";
 
 export async function openDispute(input: {
   orderId: string;
@@ -21,7 +24,7 @@ export async function openDispute(input: {
     throw new AppError(400, "Reason is too short", "VALIDATION_ERROR");
   }
 
-  return withServiceTransaction(async (tx) => {
+  const result = await withServiceTransaction(async (tx) => {
     const order = await lockOrderForUpdate(tx, input.orderId);
     if (!order) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
 
@@ -67,8 +70,30 @@ export async function openDispute(input: {
       },
     });
 
-    return dispute;
+    return {
+      dispute,
+      recipientId:
+        order.buyerId === input.actor.id ? order.sellerId : order.buyerId,
+      orderId: order.id,
+    };
   }, input.actor);
+
+  if (result.recipientId !== input.actor.id) {
+    void createNotification({
+      userId: result.recipientId,
+      type: "DISPUTE",
+      title: "Disputa aberta",
+      body: "Um pedido em que você participa entrou em disputa.",
+      href: routes.order(result.orderId),
+      meta: { disputeId: result.dispute.id, orderId: result.orderId },
+    })
+      .then((notification) => {
+        emitNotificationNew(result.recipientId, notification);
+      })
+      .catch(() => undefined);
+  }
+
+  return result.dispute;
 }
 
 export async function resolveDispute(input: {

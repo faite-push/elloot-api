@@ -1,0 +1,7 @@
+[
+  { "value": "SERVICO", "label": "Serviço", "sortOrder": 0 },
+  { "value": "CONTA", "label": "Conta", "sortOrder": 1 },
+  { "value": "GOLD", "label": "Gold", "sortOrder": 2 },
+  { "value": "ITEM", "label": "Item", "sortOrder": 3 },
+  { "value": "OUTROS", "label": "Outros", "sortOrder": 4 }
+]

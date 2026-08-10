@@ -1,9 +1,12 @@
 import { z } from "zod";
 
+const MIN_PRICE_CENTS = 150;
+
 const listingOfferSchema = z.object({
   title: z.string().trim().min(2).max(120),
-  priceCents: z.number().int().positive().max(50_000_000),
+  priceCents: z.number().int().min(MIN_PRICE_CENTS).max(50_000_000),
   stockQuantity: z.number().int().positive().max(1_000_000).optional().default(1),
+  deliveryMode: z.enum(["MANUAL", "AUTO"]).optional().default("MANUAL"),
 });
 
 export const createListingSchema = z
@@ -11,13 +14,20 @@ export const createListingSchema = z
     categoryId: z.string().min(1),
     title: z.string().trim().min(5).max(120),
     description: z.string().trim().min(20).max(5000),
-    priceCents: z.number().int().positive().max(50_000_000).optional(),
+    priceCents: z.number().int().min(MIN_PRICE_CENTS).max(50_000_000).optional(),
     stockQuantity: z.number().int().positive().max(1_000_000).optional().default(1),
     productType: z
       .enum(["CONTA", "ITEM", "SERVICO", "GOLD", "OUTROS"])
       .optional()
       .nullable(),
     listingModel: z.enum(["NORMAL", "DYNAMIC", "SERVICE"]).optional().default("NORMAL"),
+    deliveryMode: z.enum(["MANUAL", "AUTO"]).optional().default("MANUAL"),
+    /** Preferred: MediaAsset ids owned by the seller (purpose LISTING). */
+    mediaAssetIds: z.array(z.string().min(1)).max(8).optional().default([]),
+    /**
+     * @deprecated Prefer mediaAssetIds. Still accepted only when each URL
+     * maps to an owned LISTING MediaAsset.
+     */
     mediaUrls: z.array(z.url()).max(8).optional().default([]),
     publish: z.boolean().optional().default(false),
     offers: z.array(listingOfferSchema).min(2).max(30).optional(),
@@ -34,8 +44,7 @@ export const createListingSchema = z
       return;
     }
     if (data.listingModel === "SERVICE") {
-      // Service may use a minimum/quote price; still require a positive priceCents.
-      if (data.priceCents == null || data.priceCents < 1) {
+      if (data.priceCents == null || data.priceCents < MIN_PRICE_CENTS) {
         ctx.addIssue({
           code: "custom",
           message: "Service listings require a starting price",
@@ -44,7 +53,7 @@ export const createListingSchema = z
       }
       return;
     }
-    if (data.priceCents == null || data.priceCents < 1) {
+    if (data.priceCents == null || data.priceCents < MIN_PRICE_CENTS) {
       ctx.addIssue({
         code: "custom",
         message: "priceCents is required",
@@ -58,12 +67,13 @@ export const updateListingSchema = z
     categoryId: z.string().min(1).optional(),
     title: z.string().trim().min(5).max(120).optional(),
     description: z.string().trim().min(20).max(5000).optional(),
-    priceCents: z.number().int().positive().max(50_000_000).optional(),
+    priceCents: z.number().int().min(MIN_PRICE_CENTS).max(50_000_000).optional(),
     stockQuantity: z.number().int().positive().max(1_000_000).optional(),
     productType: z
       .enum(["CONTA", "ITEM", "SERVICO", "GOLD", "OUTROS"])
       .optional()
       .nullable(),
+    mediaAssetIds: z.array(z.string().min(1)).max(8).optional(),
     mediaUrls: z.array(z.url()).max(8).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {

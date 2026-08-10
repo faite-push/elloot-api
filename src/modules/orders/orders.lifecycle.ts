@@ -7,7 +7,10 @@ import {
   type RlsActor,
 } from "../../databases";
 import { calcFeeCents } from "./orders.fees";
-import { clearListingReservation } from "./orders.reserve";
+import {
+  restoreOrderStock,
+  syncListingStatusAfterSale,
+} from "./orders.stock";
 
 type Tx = Parameters<Parameters<typeof withServiceTransaction>[0]>[0];
 
@@ -49,12 +52,21 @@ export async function completeOrderTx(
     data: { releasedAt: new Date() },
   });
 
+  // Stock already decremented at checkout; mark SOLD only when depleted.
+  await syncListingStatusAfterSale(tx, order.listingId);
+
   await tx.listing.update({
     where: { id: order.listingId },
-    data: { status: "SOLD" },
+    data: {
+      unitsSold: { increment: 1 },
+      salesCount: { increment: 1 },
+    },
   });
 
-  await clearListingReservation(order.listingId);
+  await tx.user.update({
+    where: { id: order.sellerId },
+    data: { reputationScore: { increment: 1 } },
+  });
 
   return tx.order.update({
     where: { id: order.id },
@@ -62,7 +74,7 @@ export async function completeOrderTx(
   });
 }
 
-/** Full refund to buyer wallet; listing returns to ACTIVE. */
+/** Full refund to buyer wallet; restore stock and reopen listing if needed. */
 export async function refundOrderTx(tx: Tx, orderId: string) {
   const order = await lockOrderForUpdate(tx, orderId);
   if (!order) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
@@ -96,12 +108,8 @@ export async function refundOrderTx(tx: Tx, orderId: string) {
     data: { status: "REFUNDED" },
   });
 
-  await tx.listing.update({
-    where: { id: order.listingId },
-    data: { status: "ACTIVE" },
-  });
-
-  await clearListingReservation(order.listingId);
+  await restoreOrderStock(tx, order);
+  await syncListingStatusAfterSale(tx, order.listingId);
 
   return tx.order.update({
     where: { id: order.id },
@@ -156,12 +164,8 @@ export async function settlePartialOrderTx(
     data: { releasedAt: new Date() },
   });
 
-  await tx.listing.update({
-    where: { id: order.listingId },
-    data: { status: "SOLD" },
-  });
-
-  await clearListingReservation(order.listingId);
+  // Unit stays sold (stock already decremented at checkout).
+  await syncListingStatusAfterSale(tx, order.listingId);
 
   return tx.order.update({
     where: { id: order.id },
@@ -193,7 +197,8 @@ export async function cancelOrderByBuyer(
       data: { status: "CANCELLED" },
     });
 
-    await clearListingReservation(order.listingId);
+    await restoreOrderStock(tx, order);
+    await syncListingStatusAfterSale(tx, order.listingId);
 
     return tx.order.update({
       where: { id: order.id },
@@ -205,8 +210,10 @@ export async function cancelOrderByBuyer(
 export async function expirePendingOrders() {
   return withServiceTransaction(async (tx) => {
     const now = new Date();
-    const due = await tx.$queryRaw<{ id: string; listingId: string }[]>`
-      SELECT id, "listingId"
+    const due = await tx.$queryRaw<
+      { id: string; listingId: string; offerId: string | null }[]
+    >`
+      SELECT id, "listingId", "offerId"
       FROM orders
       WHERE status = 'PENDING_PAYMENT'
         AND "expiresAt" IS NOT NULL
@@ -221,11 +228,12 @@ export async function expirePendingOrders() {
         where: { orderId: row.id, status: "PENDING" },
         data: { status: "CANCELLED" },
       });
+      await restoreOrderStock(tx, row);
+      await syncListingStatusAfterSale(tx, row.listingId);
       await tx.order.update({
         where: { id: row.id },
         data: { status: "EXPIRED" },
       });
-      await clearListingReservation(row.listingId);
       expired += 1;
     }
 

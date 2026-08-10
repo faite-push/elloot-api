@@ -52,6 +52,8 @@ authRouter.post(
           passwordHash,
           name,
           role: "BUYER",
+          emailVerifiedAt: new Date(),
+          lastSeenAt: new Date(),
         },
         select: {
           id: true,
@@ -100,6 +102,16 @@ authRouter.post(
     if (!valid) {
       throw new AppError(401, "Invalid credentials", "INVALID_CREDENTIALS");
     }
+
+    await withServiceTransaction(async (tx) =>
+      tx.user.update({
+        where: { id: user.id },
+        data: {
+          lastSeenAt: new Date(),
+          emailVerifiedAt: user.emailVerifiedAt ?? new Date(),
+        },
+      }),
+    );
 
     const accessToken = signAccessToken({
       id: user.id,

@@ -92,27 +92,39 @@ enum MediaVisibility {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String?
-  name         String?
-  avatarUrl    String?
-  role         Role      @default(BUYER)
-  kycStatus    KycStatus @default(NONE)
-  pixKey       String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String?
+  name            String?
+  avatarUrl       String?
+  role            Role      @default(BUYER)
+  kycStatus       KycStatus @default(NONE)
+  pixKey          String?
+  /// Last authenticated activity (online / visto há…).
+  lastSeenAt      DateTime?
+  emailVerifiedAt DateTime?
+  phone           String?
+  phoneVerifiedAt DateTime?
+  /// Cached GGMAX-style reputation points (updated from reviews/sales).
+  reputationScore Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  accounts         Account[]
-  listings         Listing[]       @relation("SellerListings")
-  ordersAsBuyer    Order[]         @relation("BuyerOrders")
-  ordersAsSeller   Order[]         @relation("SellerOrders")
-  messages         Message[]
-  disputesOpened   Dispute[]       @relation("DisputeOpener")
-  ledgerEntries    WalletLedger[]
-  payouts          Payout[]
-  auditLogs        AuditLog[]
-  mediaAssets      MediaAsset[]
+  accounts            Account[]
+  listings            Listing[]          @relation("SellerListings")
+  ordersAsBuyer       Order[]            @relation("BuyerOrders")
+  ordersAsSeller      Order[]            @relation("SellerOrders")
+  messages            Message[]
+  disputesOpened      Dispute[]          @relation("DisputeOpener")
+  ledgerEntries       WalletLedger[]
+  payouts             Payout[]
+  auditLogs           AuditLog[]
+  mediaAssets         MediaAsset[]
+  reviewsReceived     Review[]           @relation("SellerReviews")
+  reviewsWritten      Review[]           @relation("BuyerReviews")
+  questionsAsked      ListingQuestion[]  @relation("QuestionAsker")
+  questionsAnswered   ListingQuestion[]  @relation("QuestionAnswerer")
+  notifications       Notification[]
 
   @@map("users")
 }
@@ -219,6 +231,11 @@ enum ListingModel {
   SERVICE
 }
 
+enum DeliveryMode {
+  MANUAL
+  AUTO
+}
+
 model Listing {
   id            String        @id @default(cuid())
   sellerId      String
@@ -228,18 +245,26 @@ model Listing {
   priceCents    Int
   /// Stock for NORMAL/SERVICE. DYNAMIC uses per-offer stock.
   stockQuantity Int           @default(1)
+  /// Units fulfilled via completed orders.
+  unitsSold     Int           @default(0)
+  /// Completed order count (sales).
+  salesCount    Int           @default(0)
   /// Seller-facing product kind: CONTA | ITEM | SERVICO | GOLD | OUTROS
   productType   String?
   listingModel  ListingModel  @default(NORMAL)
+  /// How the seller fulfills: manual chat delivery vs automatic codes/keys.
+  deliveryMode  DeliveryMode  @default(MANUAL)
   status        ListingStatus @default(DRAFT)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  seller   User           @relation("SellerListings", fields: [sellerId], references: [id])
-  category Category       @relation(fields: [categoryId], references: [id])
-  media    ListingMedia[]
-  offers   ListingOffer[]
-  orders   Order[]
+  seller    User              @relation("SellerListings", fields: [sellerId], references: [id])
+  category  Category          @relation(fields: [categoryId], references: [id])
+  media     ListingMedia[]
+  offers    ListingOffer[]
+  orders    Order[]
+  reviews   Review[]
+  questions ListingQuestion[]
 
   @@index([status, categoryId])
   @@index([sellerId])
@@ -248,15 +273,17 @@ model Listing {
 
 /// Options inside a DYNAMIC listing (GGMAX-style multi-item ad).
 model ListingOffer {
-  id            String   @id @default(cuid())
+  id            String       @id @default(cuid())
   listingId     String
   title         String
   priceCents    Int
-  stockQuantity Int      @default(1)
-  sortOrder     Int      @default(0)
-  createdAt     DateTime @default(now())
+  stockQuantity Int          @default(1)
+  deliveryMode  DeliveryMode @default(MANUAL)
+  sortOrder     Int          @default(0)
+  createdAt     DateTime     @default(now())
 
   listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  orders  Order[]
 
   @@index([listingId])
   @@map("listing_offers")
@@ -277,6 +304,8 @@ model ListingMedia {
 model Order {
   id          String      @id @default(cuid())
   listingId   String
+  /// Set when buying a DYNAMIC listing offer.
+  offerId     String?
   buyerId     String
   sellerId    String
   amountCents Int
@@ -289,18 +318,21 @@ model Order {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
-  listing       Listing        @relation(fields: [listingId], references: [id])
-  buyer         User           @relation("BuyerOrders", fields: [buyerId], references: [id])
-  seller        User           @relation("SellerOrders", fields: [sellerId], references: [id])
+  listing       Listing         @relation(fields: [listingId], references: [id])
+  offer         ListingOffer?   @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  buyer         User            @relation("BuyerOrders", fields: [buyerId], references: [id])
+  seller        User            @relation("SellerOrders", fields: [sellerId], references: [id])
   payment       Payment?
   escrowHold    EscrowHold?
   conversation  Conversation?
   dispute       Dispute?
   ledgerEntries WalletLedger[]
+  review        Review?
 
   @@index([buyerId])
   @@index([sellerId])
   @@index([status])
+  @@index([offerId])
   @@map("orders")
 }
 
@@ -335,13 +367,17 @@ model EscrowHold {
 }
 
 model Conversation {
-  id        String    @id @default(cuid())
-  orderId   String    @unique
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  order     Order     @relation(fields: [orderId], references: [id])
-  messages  Message[]
+  id                 String    @id @default(cuid())
+  orderId            String    @unique
+  /// Denormalized for inbox sorting / preview (chat-ready).
+  lastMessageAt      DateTime?
+  lastMessagePreview String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  order              Order     @relation(fields: [orderId], references: [id])
+  messages           Message[]
 
+  @@index([lastMessageAt])
   @@map("conversations")
 }
 
@@ -350,11 +386,15 @@ model Message {
   conversationId String
   senderId       String
   body           String
+  /// Client-generated id for optimistic UI / dedupe (chat-ready).
+  clientId       String?
+  readAt         DateTime?
   createdAt      DateTime     @default(now())
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender         User         @relation(fields: [senderId], references: [id])
 
   @@index([conversationId, createdAt])
+  @@index([conversationId, clientId])
   @@map("messages")
 }
 
@@ -419,4 +459,67 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+/// Buyer review after a completed order (feeds seller reputation).
+model Review {
+  id        String   @id @default(cuid())
+  orderId   String   @unique
+  listingId String
+  sellerId  String
+  buyerId   String
+  /// 1–5 stars
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  seller  User    @relation("SellerReviews", fields: [sellerId], references: [id])
+  buyer   User    @relation("BuyerReviews", fields: [buyerId], references: [id])
+
+  @@index([sellerId, createdAt])
+  @@index([listingId, createdAt])
+  @@map("reviews")
+}
+
+/// Public Q&A on a listing (TrustMarket / GGMAX style).
+model ListingQuestion {
+  id           String    @id @default(cuid())
+  listingId    String
+  askerId      String
+  body         String
+  answer       String?
+  answeredAt   DateTime?
+  answeredById String?
+  /// Hidden / replaced by moderation.
+  moderated    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+
+  listing    Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  asker      User    @relation("QuestionAsker", fields: [askerId], references: [id])
+  answeredBy User?   @relation("QuestionAnswerer", fields: [answeredById], references: [id])
+
+  @@index([listingId, createdAt])
+  @@index([askerId])
+  @@map("listing_questions")
+}
+
+/// In-app notifications (socket push + REST inbox).
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  /// MESSAGE | ORDER | DISPUTE | SYSTEM
+  type      String
+  title     String
+  body      String
+  href      String?
+  readAt    DateTime?
+  meta      Json?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@map("notifications")
 }

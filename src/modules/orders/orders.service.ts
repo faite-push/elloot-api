@@ -2,16 +2,14 @@ import { env } from "../../config/env";
 import { AppError } from "../../lib/errors";
 import {
   lockListingForUpdate,
+  lockOfferForUpdate,
   lockOrderForUpdate,
-  withRlsTransaction,
   withServiceTransaction,
   type RlsActor,
 } from "../../databases";
 import { completeOrderTx } from "./orders.lifecycle";
 import { calcFeeCents } from "./orders.fees";
 import {
-  clearListingReservation,
-  getListingReservation,
   tryReserveListing,
 } from "./orders.reserve";
 
@@ -20,11 +18,15 @@ export { calcFeeCents };
 /**
  * Create order under service RLS context so FOR UPDATE can see competing
  * checkouts on the same listing (user-scoped RLS would hide them).
+ *
+ * Stock is reserved (decremented) here and restored on cancel/expire/refund.
+ * DYNAMIC listings require `offerId` and use the offer price/stock.
  */
 export async function createOrderFromListing(input: {
   listingId: string;
   buyerId: string;
   actor: RlsActor;
+  offerId?: string | null;
 }) {
   if (input.actor.id !== input.buyerId) {
     throw new AppError(403, "Forbidden", "FORBIDDEN");
@@ -40,49 +42,66 @@ export async function createOrderFromListing(input: {
       throw new AppError(400, "You cannot buy your own listing", "SELF_PURCHASE");
     }
 
-    const reservedBy = await getListingReservation(listing.id);
-    if (reservedBy) {
-      throw new AppError(
-        409,
-        "Listing reserved in another checkout",
-        "LISTING_RESERVED",
-      );
+    let amountCents = listing.priceCents;
+    let offerId: string | null = null;
+
+    if (listing.listingModel === "DYNAMIC") {
+      if (!input.offerId) {
+        throw new AppError(
+          400,
+          "Select an offer for this listing",
+          "OFFER_REQUIRED",
+        );
+      }
+      const offer = await lockOfferForUpdate(tx, input.offerId);
+      if (!offer || offer.listingId !== listing.id) {
+        throw new AppError(404, "Offer not found", "OFFER_NOT_FOUND");
+      }
+      if (offer.stockQuantity < 1) {
+        throw new AppError(409, "Offer out of stock", "OUT_OF_STOCK");
+      }
+      await tx.listingOffer.update({
+        where: { id: offer.id },
+        data: { stockQuantity: { decrement: 1 } },
+      });
+      amountCents = offer.priceCents;
+      offerId = offer.id;
+    } else {
+      if (input.offerId) {
+        throw new AppError(
+          400,
+          "This listing does not use offers",
+          "OFFER_NOT_ALLOWED",
+        );
+      }
+      if (listing.stockQuantity < 1) {
+        throw new AppError(409, "Listing out of stock", "OUT_OF_STOCK");
+      }
+      await tx.listing.update({
+        where: { id: listing.id },
+        data: { stockQuantity: { decrement: 1 } },
+      });
+      amountCents = listing.priceCents;
     }
 
-    const blocking = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM orders
-      WHERE "listingId" = ${listing.id}
-        AND status IN ('PENDING_PAYMENT', 'PAID', 'DELIVERED', 'DISPUTED')
-      LIMIT 1
-      FOR UPDATE
-    `;
-    if (blocking[0]) {
-      throw new AppError(409, "Listing currently unavailable", "LISTING_BUSY");
-    }
-
-    const feeCents = calcFeeCents(listing.priceCents);
+    const feeCents = calcFeeCents(amountCents);
     const expiresAt = new Date(Date.now() + env.CHECKOUT_RESERVE_SECONDS * 1000);
 
     const order = await tx.order.create({
       data: {
         listingId: listing.id,
+        offerId,
         buyerId: input.buyerId,
         sellerId: listing.sellerId,
-        amountCents: listing.priceCents,
+        amountCents,
         feeCents,
         status: "PENDING_PAYMENT",
         expiresAt,
       },
     });
 
-    const reserved = await tryReserveListing(listing.id, order.id);
-    if (!reserved) {
-      throw new AppError(
-        409,
-        "Listing reserved in another checkout",
-        "LISTING_RESERVED",
-      );
-    }
+    // Soft signal for last-unit / ops tooling; stock is the source of truth.
+    await tryReserveListing(listing.id, order.id);
 
     return order;
   }, input.actor);
@@ -93,10 +112,14 @@ export async function markOrderDelivered(
   sellerId: string,
   actor: RlsActor,
 ) {
-  return withRlsTransaction({ actor }, async (tx) => {
+  if (actor.id !== sellerId && actor.role !== "ADMIN") {
+    throw new AppError(403, "Forbidden", "FORBIDDEN");
+  }
+
+  return withServiceTransaction(async (tx) => {
     const order = await lockOrderForUpdate(tx, orderId);
     if (!order) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
-    if (order.sellerId !== sellerId) {
+    if (order.sellerId !== sellerId && actor.role !== "ADMIN") {
       throw new AppError(403, "Forbidden", "FORBIDDEN");
     }
     if (order.status !== "PAID") {
@@ -107,7 +130,7 @@ export async function markOrderDelivered(
       where: { id: orderId },
       data: { status: "DELIVERED", deliveredAt: new Date() },
     });
-  });
+  }, actor);
 }
 
 export async function confirmOrderByBuyer(

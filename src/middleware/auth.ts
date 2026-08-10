@@ -37,6 +37,22 @@ export function signAccessToken(user: AuthUser) {
   );
 }
 
+export function verifyAccessToken(token: string): AuthUser {
+  try {
+    const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+    if (!payload.sub || !payload.email || !payload.role) {
+      throw new Error("invalid payload");
+    }
+    return {
+      id: payload.sub,
+      email: payload.email,
+      role: payload.role,
+    };
+  } catch {
+    throw new AppError(401, "Invalid or expired token", "UNAUTHORIZED");
+  }
+}
+
 export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
@@ -46,15 +62,14 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   const token = header.slice("Bearer ".length);
 
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-    req.user = {
-      id: payload.sub,
-      email: payload.email,
-      role: payload.role,
-    };
+    req.user = verifyAccessToken(token);
     next();
-  } catch {
-    next(new AppError(401, "Invalid or expired token", "UNAUTHORIZED"));
+  } catch (err) {
+    next(
+      err instanceof AppError
+        ? err
+        : new AppError(401, "Invalid or expired token", "UNAUTHORIZED"),
+    );
   }
 }
 
