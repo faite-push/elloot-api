@@ -10,6 +10,8 @@ import { mediaRouter } from "../modules/media/media.routes";
 import { notificationsRouter } from "../modules/notifications/notifications.routes";
 import { ordersRouter } from "../modules/orders/orders.routes";
 import { paymentsRouter } from "../modules/payments/payments.routes";
+import { questionsRouter } from "../modules/questions/questions.routes";
+import { reviewsRouter } from "../modules/reviews/reviews.routes";
 import { walletRouter } from "../modules/wallet/wallet.routes";
 
 export const apiRouter = Router();
@@ -25,4 +27,6 @@ apiRouter.use("/wallet", walletRouter);
 apiRouter.use("/conversations", conversationsRouter);
 apiRouter.use("/disputes", disputesRouter);
 apiRouter.use("/notifications", notificationsRouter);
+apiRouter.use("/questions", questionsRouter);
+apiRouter.use("/reviews", reviewsRouter);
 apiRouter.use("/jobs", jobsRouter);

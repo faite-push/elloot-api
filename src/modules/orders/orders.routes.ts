@@ -69,6 +69,14 @@ const orderSelect = {
     },
   },
   conversation: { select: { id: true } },
+  review: {
+    select: {
+      id: true,
+      rating: true,
+      comment: true,
+      createdAt: true,
+    },
+  },
   dispute: {
     select: {
       id: true,
