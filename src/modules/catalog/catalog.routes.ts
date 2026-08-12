@@ -373,6 +373,8 @@ catalogRouter.get(
         : typeof req.query.game === "string"
           ? req.query.game.trim()
           : undefined;
+    const seller =
+      typeof req.query.seller === "string" ? req.query.seller.trim() : undefined;
     const q = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
     const cursor =
       typeof req.query.cursor === "string" ? req.query.cursor : undefined;
@@ -416,6 +418,7 @@ catalogRouter.get(
       return tx.listing.findMany({
         where: {
           status: "ACTIVE",
+          ...(seller ? { sellerId: seller } : {}),
           ...(priceFilter ? { priceCents: priceFilter } : {}),
           ...(q
             ? {
