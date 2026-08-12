@@ -7,8 +7,15 @@ import { asyncHandler } from "../../lib/async-handler";
 import { AppError } from "../../lib/errors";
 import { routeParam } from "../../lib/route-param";
 import { sanitizeUserText } from "../../lib/sanitize";
+import { setAuthCookie } from "../../lib/auth-cookie";
 import { optionalAuth } from "../../middleware/optional-auth";
-import { requireAuth, signAccessToken } from "../../middleware/auth";
+import {
+  invalidateAuthUserCache,
+  requireAuth,
+  signAccessToken,
+  verifyAccessToken,
+} from "../../middleware/auth";
+import { revokeAccessToken } from "../auth/token-revoke";
 import { createListingSchema, updateListingSchema } from "./listings.schemas";
 import {
   assertLeafCategory,
@@ -115,15 +122,28 @@ listingsRouter.post(
       });
     });
 
-    const accessToken = promotedToSeller
-      ? signAccessToken({
-          id: req.user!.id,
-          email: req.user!.email,
-          role: "SELLER",
-        })
-      : undefined;
+    if (promotedToSeller) {
+      const accessToken = signAccessToken({
+        id: req.user!.id,
+        email: req.user!.email,
+        role: "SELLER",
+      });
+      if (req.accessToken) {
+        try {
+          const prev = verifyAccessToken(req.accessToken);
+          await revokeAccessToken(req.accessToken, {
+            jti: prev.jti,
+            expiresAtMs: prev.exp ? prev.exp * 1000 : undefined,
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+      invalidateAuthUserCache(req.user!.id);
+      setAuthCookie(res, accessToken);
+    }
 
-    res.status(201).json({ listing, ...(accessToken ? { accessToken } : {}) });
+    res.status(201).json({ listing });
   }),
 );
 

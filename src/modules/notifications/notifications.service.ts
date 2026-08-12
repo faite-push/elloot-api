@@ -1,5 +1,9 @@
 import type { Prisma } from "@prisma/client";
-import { withServiceTransaction, type RlsActor } from "../../databases";
+import {
+  withRlsTransaction,
+  withServiceTransaction,
+  type RlsActor,
+} from "../../databases";
 import { AppError } from "../../lib/errors";
 import { sanitizeUserText } from "../../lib/sanitize";
 
@@ -24,6 +28,19 @@ export type NotificationDto = {
   createdAt: string;
   meta?: unknown;
 };
+
+/** Only relative app paths — blocks open redirects via notification href. */
+function sanitizeInternalHref(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/[\\]/.test(trimmed) || /%5c/i.test(trimmed)) return null;
+  if (!trimmed.startsWith("/")) return null;
+  if (trimmed.startsWith("//")) return null;
+  if (trimmed.includes("://")) return null;
+  if (trimmed.length > 500) return null;
+  return trimmed;
+}
 
 function serialize(
   row: {
@@ -66,7 +83,7 @@ export async function createNotification(input: {
         type: input.type,
         title,
         body,
-        href: input.href ?? null,
+        href: sanitizeInternalHref(input.href),
         meta: input.meta,
       },
       select: notificationSelect,
@@ -80,7 +97,7 @@ export async function listMyNotifications(
   opts?: { unreadOnly?: boolean; take?: number },
 ) {
   const take = Math.min(opts?.take ?? 40, 100);
-  const rows = await withServiceTransaction(async (tx) =>
+  const rows = await withRlsTransaction({ actor }, async (tx) =>
     tx.notification.findMany({
       where: {
         userId: actor.id,
@@ -98,7 +115,7 @@ export async function markNotificationRead(
   actor: RlsActor,
   notificationId: string,
 ) {
-  const updated = await withServiceTransaction(async (tx) => {
+  const updated = await withRlsTransaction({ actor }, async (tx) => {
     const existing = await tx.notification.findFirst({
       where: { id: notificationId, userId: actor.id },
       select: { id: true },
@@ -111,15 +128,15 @@ export async function markNotificationRead(
       data: { readAt: new Date() },
       select: notificationSelect,
     });
-  }, actor);
+  });
   return serialize(updated);
 }
 
 export async function markAllNotificationsRead(actor: RlsActor) {
-  await withServiceTransaction(async (tx) => {
+  await withRlsTransaction({ actor }, async (tx) => {
     await tx.notification.updateMany({
       where: { userId: actor.id, readAt: null },
       data: { readAt: new Date() },
     });
-  }, actor);
+  });
 }

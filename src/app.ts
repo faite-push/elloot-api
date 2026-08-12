@@ -6,6 +6,7 @@ import cookieParser from "cookie-parser";
 import { env } from "./config/env";
 import { apiRouter } from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
+import { apiGeneralLimiter } from "./middleware/rate-limit";
 
 export function createApp() {
   const app = express();
@@ -37,6 +38,7 @@ export function createApp() {
   app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
+  app.use("/api", apiGeneralLimiter);
 
   app.get("/", (_req, res) => {
     res.json({

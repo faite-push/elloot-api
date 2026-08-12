@@ -65,3 +65,7 @@ export function listingReserveKey(listingId: string) {
 export function oauthStateKey(state: string) {
   return `elloot:oauth:state:${state}`;
 }
+
+export function oauthExchangeKey(code: string) {
+  return `elloot:oauth:exchange:${code}`;
+}

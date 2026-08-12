@@ -16,11 +16,21 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional(),
   REDIS_SSL_CERT_PATH: z.string().optional(),
   REDIS_SSL_CERT: z.string().optional(),
-  JWT_SECRET: z.string().min(16),
-  JWT_EXPIRES_IN: z.string().default("7d"),
+  JWT_SECRET: z.string().min(32),
+  JWT_EXPIRES_IN: z.string().default("12h"),
   PLATFORM_FEE_BPS: z.coerce.number().int().min(0).max(10_000).default(1000),
   ESCROW_AUTO_RELEASE_HOURS: z.coerce.number().int().positive().default(48),
   PAYMENT_PROVIDER: z.enum(["sandbox"]).default("sandbox"),
+  /**
+   * When true, POST /api/payments/sandbox/confirm is allowed.
+   * Defaults to false in production, true otherwise.
+   */
+  ALLOW_SANDBOX_PAYMENTS: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((v) =>
+      v === undefined ? undefined : v === "true",
+    ),
   /** Required for POST /api/payments/sandbox/webhook. Empty = webhook disabled. */
   SANDBOX_WEBHOOK_SECRET: z.string().optional(),
   CHECKOUT_RESERVE_SECONDS: z.coerce.number().int().positive().default(900),
@@ -60,6 +70,39 @@ if (!parsed.success) {
 
 const data = parsed.data;
 
+const WEAK_JWT_SECRETS = new Set([
+  "change-me-in-production-use-long-random-string",
+  "changeme",
+  "secret",
+  "jwt-secret",
+]);
+
+if (
+  WEAK_JWT_SECRETS.has(data.JWT_SECRET) ||
+  data.JWT_SECRET.length < 32 ||
+  data.JWT_SECRET.startsWith("replace-with") ||
+  data.JWT_SECRET.startsWith("change-me")
+) {
+  console.error(
+    "JWT_SECRET is missing, too short (<32), or uses a known placeholder. Generate a long random secret.",
+  );
+  process.exit(1);
+}
+
+if (
+  data.MEDIA_SIGNING_SECRET &&
+  (WEAK_JWT_SECRETS.has(data.MEDIA_SIGNING_SECRET) ||
+    data.MEDIA_SIGNING_SECRET.length < 32)
+) {
+  console.error(
+    "MEDIA_SIGNING_SECRET is too weak. Use a long random secret distinct from JWT_SECRET.",
+  );
+  process.exit(1);
+}
+
+const allowSandboxPayments =
+  data.ALLOW_SANDBOX_PAYMENTS ?? data.NODE_ENV !== "production";
+
 const postgresCertPath = resolveSslCertPath({
   pathEnv: data.DATABASE_SSL_CERT_PATH,
   contentEnv: data.DATABASE_SSL_CERT,
@@ -98,4 +141,5 @@ export const env = {
   discordEnabled: Boolean(data.DISCORD_CLIENT_ID && data.DISCORD_CLIENT_SECRET),
   mediaSigningSecret: data.MEDIA_SIGNING_SECRET || data.JWT_SECRET,
   s3Configured,
+  allowSandboxPayments,
 };

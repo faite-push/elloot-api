@@ -3,13 +3,14 @@ import { Server } from "socket.io";
 import { env } from "../config/env";
 import { withServiceTransaction } from "../databases";
 import { AppError } from "../lib/errors";
-import { verifyAccessToken } from "../middleware/auth";
+import { authenticateAccessToken } from "../middleware/auth";
 import { sendConversationMessage } from "../modules/conversations/conversations.service";
 import {
   addPresenceSocket,
   isUserOnline,
   removePresenceSocket,
 } from "./presence";
+import { filterAllowedPresenceIds } from "./presence-authz";
 import type {
   ClientToServerEvents,
   InterServerEvents,
@@ -59,23 +60,37 @@ export function attachRealtime(httpServer: HttpServer): RealtimeServer {
   });
 
   io.use((socket, next) => {
-    try {
-      const raw =
-        (typeof socket.handshake.auth?.token === "string"
-          ? socket.handshake.auth.token
-          : null) ??
-        (typeof socket.handshake.headers.authorization === "string" &&
-        socket.handshake.headers.authorization.startsWith("Bearer ")
-          ? socket.handshake.headers.authorization.slice("Bearer ".length)
-          : null);
-      if (!raw) {
-        return next(new Error("UNAUTHORIZED"));
+    void (async () => {
+      try {
+        const fromAuth =
+          typeof socket.handshake.auth?.token === "string"
+            ? socket.handshake.auth.token
+            : null;
+        const fromHeader =
+          typeof socket.handshake.headers.authorization === "string" &&
+          socket.handshake.headers.authorization.startsWith("Bearer ")
+            ? socket.handshake.headers.authorization.slice("Bearer ".length)
+            : null;
+        let fromCookie: string | null = null;
+        const cookieHeader = socket.handshake.headers.cookie;
+        if (typeof cookieHeader === "string") {
+          const match = /(?:^|;\s*)elloot_at=([^;]+)/.exec(cookieHeader);
+          if (match?.[1]) {
+            fromCookie = decodeURIComponent(match[1]);
+          }
+        }
+        const raw = fromCookie || fromAuth || fromHeader;
+        if (!raw) {
+          next(new Error("UNAUTHORIZED"));
+          return;
+        }
+        const { user } = await authenticateAccessToken(raw);
+        socket.data.user = user;
+        next();
+      } catch {
+        next(new Error("UNAUTHORIZED"));
       }
-      socket.data.user = verifyAccessToken(raw);
-      next();
-    } catch {
-      next(new Error("UNAUTHORIZED"));
-    }
+    })();
   });
 
   io.on("connection", (socket) => {
@@ -94,33 +109,34 @@ export function attachRealtime(httpServer: HttpServer): RealtimeServer {
     });
 
     socket.on("presence:subscribe", (payload) => {
-      const ids = Array.isArray(payload?.userIds)
-        ? payload.userIds.filter((id) => typeof id === "string").slice(0, 50)
+      const requested = Array.isArray(payload?.userIds)
+        ? payload.userIds.filter((id) => typeof id === "string")
         : [];
-      for (const id of ids) {
-        void socket.join(presenceRoom(id));
-        socket.emit("presence:update", {
-          userId: id,
-          online: isUserOnline(id),
-          lastSeenAt: null,
-        });
-      }
-      // Enrich with lastSeenAt from DB for offline users.
-      if (ids.length > 0) {
-        void withServiceTransaction(async (tx) => {
-          const users = await tx.user.findMany({
+      void (async () => {
+        const ids = await filterAllowedPresenceIds(user.id, requested);
+        for (const id of ids) {
+          void socket.join(presenceRoom(id));
+          socket.emit("presence:update", {
+            userId: id,
+            online: isUserOnline(id),
+            lastSeenAt: null,
+          });
+        }
+        if (ids.length === 0) return;
+        const users = await withServiceTransaction(async (tx) =>
+          tx.user.findMany({
             where: { id: { in: ids } },
             select: { id: true, lastSeenAt: true },
+          }),
+        );
+        for (const u of users) {
+          socket.emit("presence:update", {
+            userId: u.id,
+            online: isUserOnline(u.id),
+            lastSeenAt: u.lastSeenAt?.toISOString() ?? null,
           });
-          for (const u of users) {
-            socket.emit("presence:update", {
-              userId: u.id,
-              online: isUserOnline(u.id),
-              lastSeenAt: u.lastSeenAt?.toISOString() ?? null,
-            });
-          }
-        }).catch(() => undefined);
-      }
+        }
+      })().catch(() => undefined);
     });
 
     socket.on("presence:unsubscribe", (payload) => {

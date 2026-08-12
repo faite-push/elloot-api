@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { env } from "../../config/env";
 import {
   connectRedis,
+  oauthExchangeKey,
   oauthStateKey,
   redis,
   withServiceTransaction,
@@ -21,6 +22,7 @@ type OAuthProfile = {
 };
 
 const memoryStates = new Map<string, number>();
+const memoryExchange = new Map<string, { token: string; expiresAt: number }>();
 
 async function saveState(state: string) {
   const key = oauthStateKey(state);
@@ -52,6 +54,49 @@ async function consumeState(state: string) {
   const expires = memoryStates.get(state);
   memoryStates.delete(state);
   return Boolean(expires && expires > Date.now());
+}
+
+/** One-time code for frontend exchange (never put JWT in the URL).
+ *  Consume is idempotent within TTL so React Strict Mode / remounts
+ *  can safely call exchange twice with the same code.
+ */
+export async function createOAuthExchangeCode(accessToken: string) {
+  const code = randomBytes(32).toString("hex");
+  const key = oauthExchangeKey(code);
+  if (redis) {
+    try {
+      await connectRedis();
+      await redis.set(key, accessToken, "EX", 120);
+      return code;
+    } catch {
+      // fall through
+    }
+  }
+  memoryExchange.set(code, {
+    token: accessToken,
+    expiresAt: Date.now() + 120_000,
+  });
+  return code;
+}
+
+export async function consumeOAuthExchangeCode(code: string) {
+  const key = oauthExchangeKey(code);
+  if (redis) {
+    try {
+      await connectRedis();
+      // Keep the value for the TTL window (idempotent GET, no DEL).
+      const token = await redis.get(key);
+      return token;
+    } catch {
+      // fall through
+    }
+  }
+  const row = memoryExchange.get(code);
+  if (!row || row.expiresAt < Date.now()) {
+    memoryExchange.delete(code);
+    return null;
+  }
+  return row.token;
 }
 
 function requireGoogleConfig() {
@@ -257,11 +302,21 @@ export async function upsertOAuthUser(profile: OAuthProfile) {
           providerAccountId: profile.providerAccountId,
         },
       });
+
+      // OAuth provider proved email ownership. If the account was an
+      // unverified password squat, revoke the password so the attacker
+      // cannot keep logging in after the real owner claims via OAuth.
+      const reclaimUnverified =
+        !byEmail.emailVerifiedAt && Boolean(byEmail.passwordHash);
+
       return tx.user.update({
         where: { id: byEmail.id },
         data: {
           name: safeName ?? byEmail.name,
           avatarUrl: profile.avatarUrl ?? byEmail.avatarUrl,
+          emailVerifiedAt: new Date(),
+          lastSeenAt: new Date(),
+          ...(reclaimUnverified ? { passwordHash: null } : {}),
         },
       });
     }
@@ -325,8 +380,10 @@ export async function handleOAuthCallback(
   };
 }
 
-export function buildFrontendRedirect(accessToken: string) {
+/** Redirect with one-time code only — never put the JWT in the query string. */
+export async function buildFrontendRedirect(accessToken: string) {
+  const code = await createOAuthExchangeCode(accessToken);
   const url = new URL("/auth/callback", env.FRONTEND_URL);
-  url.searchParams.set("accessToken", accessToken);
+  url.searchParams.set("code", code);
   return url.toString();
 }

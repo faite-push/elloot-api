@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import {
+  withRlsTransaction,
   withServiceTransaction,
   type RlsActor,
 } from "../../databases";
@@ -78,7 +79,7 @@ reviewsRouter.get(
     const cursor =
       typeof req.query.cursor === "string" ? req.query.cursor : undefined;
 
-    const { reviews, summary } = await withServiceTransaction(async (tx) => {
+    const { reviews, summary } = await withRlsTransaction({}, async (tx) => {
       const listing = await tx.listing.findUnique({
         where: { id: listingId },
         select: { id: true, sellerId: true },
@@ -125,7 +126,7 @@ reviewsRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const actor = actorOf(req);
-    const reviews = await withServiceTransaction(async (tx) =>
+    const reviews = await withRlsTransaction({ actor }, async (tx) =>
       tx.review.findMany({
         where: { buyerId: actor.id },
         orderBy: { createdAt: "desc" },
@@ -143,7 +144,7 @@ reviewsRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const actor = actorOf(req);
-    const { reviews, summary } = await withServiceTransaction(async (tx) => {
+    const { reviews, summary } = await withRlsTransaction({ actor }, async (tx) => {
       const all = await tx.review.findMany({
         where: { sellerId: actor.id },
         orderBy: { createdAt: "desc" },
@@ -173,7 +174,7 @@ reviewsRouter.post(
       ? sanitizeUserText(parsed.comment, 1000)
       : null;
 
-    const result = await withServiceTransaction(async (tx) => {
+    const result = await withRlsTransaction({ actor }, async (tx) => {
       const order = await tx.order.findUnique({
         where: { id: parsed.orderId },
         select: {
@@ -188,7 +189,7 @@ reviewsRouter.post(
       if (!order) {
         throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
       }
-      if (order.buyerId !== actor.id && actor.role !== "ADMIN") {
+      if (order.buyerId !== actor.id) {
         throw new AppError(403, "Forbidden", "FORBIDDEN");
       }
       if (order.status !== "COMPLETED") {
@@ -214,16 +215,18 @@ reviewsRouter.post(
         select: reviewSelect,
       });
 
-      // Reputation bump for positive reviews.
-      if (parsed.rating >= 4) {
+      return { review, sellerId: order.sellerId, rating: parsed.rating };
+    });
+
+    // Reputation bump needs service role (cannot update another user's row under RLS).
+    if (result.rating >= 4) {
+      await withServiceTransaction(async (tx) => {
         await tx.user.update({
-          where: { id: order.sellerId },
+          where: { id: result.sellerId },
           data: { reputationScore: { increment: 2 } },
         });
-      }
-
-      return { review, sellerId: order.sellerId };
-    }, actor);
+      });
+    }
 
     void createNotification({
       userId: result.sellerId,

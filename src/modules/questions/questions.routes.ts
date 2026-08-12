@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import {
-  withServiceTransaction,
+  withRlsTransaction,
   type RlsActor,
 } from "../../databases";
 import { asyncHandler } from "../../lib/async-handler";
@@ -61,7 +61,7 @@ questionsRouter.get(
       typeof req.query.cursor === "string" ? req.query.cursor : undefined;
     const take = Math.min(Number(req.query.limit) || 20, 50);
 
-    const questions = await withServiceTransaction(async (tx) => {
+    const questions = await withRlsTransaction({}, async (tx) => {
       const listing = await tx.listing.findUnique({
         where: { id: listingId },
         select: { id: true, status: true },
@@ -98,7 +98,7 @@ questionsRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const actor = actorOf(req);
-    const questions = await withServiceTransaction(async (tx) =>
+    const questions = await withRlsTransaction({ actor }, async (tx) =>
       tx.listingQuestion.findMany({
         where: { askerId: actor.id, moderated: false },
         orderBy: { createdAt: "desc" },
@@ -119,7 +119,7 @@ questionsRouter.get(
     const unansweredOnly =
       req.query.unanswered === "1" || req.query.unanswered === "true";
 
-    const questions = await withServiceTransaction(async (tx) =>
+    const questions = await withRlsTransaction({ actor }, async (tx) =>
       tx.listingQuestion.findMany({
         where: {
           moderated: false,
@@ -147,7 +147,7 @@ questionsRouter.post(
       throw new AppError(400, "Question is too short", "VALIDATION_ERROR");
     }
 
-    const result = await withServiceTransaction(async (tx) => {
+    const result = await withRlsTransaction({ actor }, async (tx) => {
       const listing = await tx.listing.findUnique({
         where: { id: listingId },
         select: { id: true, status: true, sellerId: true, title: true },
@@ -173,7 +173,7 @@ questionsRouter.post(
       });
 
       return { question, sellerId: listing.sellerId, title: listing.title };
-    }, actor);
+    });
 
     void createNotification({
       userId: result.sellerId,
@@ -202,7 +202,7 @@ questionsRouter.post(
       throw new AppError(400, "Answer is too short", "VALIDATION_ERROR");
     }
 
-    const result = await withServiceTransaction(async (tx) => {
+    const result = await withRlsTransaction({ actor }, async (tx) => {
       const existing = await tx.listingQuestion.findUnique({
         where: { id },
         include: {
@@ -235,7 +235,7 @@ questionsRouter.post(
         listingId: existing.listingId,
         title: existing.listing.title,
       };
-    }, actor);
+    });
 
     void createNotification({
       userId: result.askerId,

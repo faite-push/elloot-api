@@ -8,6 +8,7 @@ import { AppError } from "../../lib/errors";
 import { routeParam } from "../../lib/route-param";
 import { requireAuth } from "../../middleware/auth";
 import { optionalAuth } from "../../middleware/optional-auth";
+import { mediaUploadLimiter } from "../../middleware/rate-limit";
 import { ALLOWED_IMAGE_MIME } from "./media.image";
 import {
   confirmSchema,
@@ -93,6 +94,7 @@ mediaRouter.get(
 mediaRouter.post(
   "/upload",
   requireAuth,
+  mediaUploadLimiter,
   multerSingle,
   asyncHandler(async (req, res) => {
     if (!req.file?.buffer) {
@@ -125,6 +127,7 @@ mediaRouter.post(
 mediaRouter.post(
   "/presign",
   requireAuth,
+  mediaUploadLimiter,
   asyncHandler(async (req, res) => {
     const body = presignSchema.parse(req.body);
     const actor = actorOf(req);

@@ -25,11 +25,18 @@ function safeEqualSecret(provided: string, expected: string) {
   return timingSafeEqual(a, b);
 }
 
-/** Sandbox only — buyer/admin simulates PIX paid. */
+/** Sandbox only — buyer/admin simulates PIX paid. Disabled in production unless ALLOW_SANDBOX_PAYMENTS=true. */
 paymentsRouter.post(
   "/sandbox/confirm",
   requireAuth,
   asyncHandler(async (req, res) => {
+    if (!env.allowSandboxPayments) {
+      throw new AppError(
+        403,
+        "Sandbox payments are disabled in this environment",
+        "SANDBOX_DISABLED",
+      );
+    }
     const body = confirmSchema.parse(req.body);
     const result = await confirmSandboxPayment(body.providerRef, actorOf(req));
     res.json({ ok: true, ...result });

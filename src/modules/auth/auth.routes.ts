@@ -2,12 +2,28 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { env } from "../../config/env";
-import { withRlsTransaction, withServiceTransaction, } from "../../databases";
+import { withRlsTransaction, withServiceTransaction } from "../../databases";
 import { AppError } from "../../lib/errors";
 import { asyncHandler } from "../../lib/async-handler";
+import { clearAuthCookie, extractAccessToken, setAuthCookie } from "../../lib/auth-cookie";
 import { sanitizeUserText } from "../../lib/sanitize";
-import { requireAuth, signAccessToken } from "../../middleware/auth";
-import { buildFrontendRedirect, getDiscordAuthUrl, getGoogleAuthUrl, handleOAuthCallback, } from "./oauth.service";
+import {
+  requireAuth,
+  signAccessToken,
+  verifyAccessToken,
+} from "../../middleware/auth";
+import {
+  authOauthStartLimiter,
+  authStrictLimiter,
+} from "../../middleware/rate-limit";
+import { revokeAccessToken } from "./token-revoke";
+import {
+  buildFrontendRedirect,
+  consumeOAuthExchangeCode,
+  getDiscordAuthUrl,
+  getGoogleAuthUrl,
+  handleOAuthCallback,
+} from "./oauth.service";
 
 export const authRouter = Router();
 
@@ -22,6 +38,10 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+const oauthExchangeSchema = z.object({
+  code: z.string().min(16).max(128),
+});
+
 authRouter.get("/providers", (_req, res) => {
   res.json({
     providers: {
@@ -34,6 +54,7 @@ authRouter.get("/providers", (_req, res) => {
 
 authRouter.post(
   "/register",
+  authStrictLimiter,
   asyncHandler(async (req, res) => {
     const body = registerSchema.parse(req.body);
     const name = body.name ? sanitizeUserText(body.name, 80) : undefined;
@@ -52,7 +73,8 @@ authRouter.post(
           passwordHash,
           name,
           role: "BUYER",
-          emailVerifiedAt: new Date(),
+          // Email ownership is not proven at register time.
+          emailVerifiedAt: null,
           lastSeenAt: new Date(),
         },
         select: {
@@ -72,6 +94,7 @@ authRouter.post(
       email: user.email,
       role: user.role,
     });
+    setAuthCookie(res, accessToken);
 
     res.status(201).json({ user, accessToken });
   }),
@@ -79,6 +102,7 @@ authRouter.post(
 
 authRouter.post(
   "/login",
+  authStrictLimiter,
   asyncHandler(async (req, res) => {
     const body = loginSchema.parse(req.body);
     const email = body.email.toLowerCase();
@@ -87,15 +111,9 @@ authRouter.post(
       tx.user.findUnique({ where: { email } }),
     );
 
-    if (!user) {
+    if (!user || !user.passwordHash) {
+      // Uniform message to reduce account enumeration.
       throw new AppError(401, "Invalid credentials", "INVALID_CREDENTIALS");
-    }
-    if (!user.passwordHash) {
-      throw new AppError(
-        401,
-        "This account uses social login. Sign in with Google or Discord.",
-        "SOCIAL_LOGIN_REQUIRED",
-      );
     }
 
     const valid = await bcrypt.compare(body.password, user.passwordHash);
@@ -106,10 +124,7 @@ authRouter.post(
     await withServiceTransaction(async (tx) =>
       tx.user.update({
         where: { id: user.id },
-        data: {
-          lastSeenAt: new Date(),
-          emailVerifiedAt: user.emailVerifiedAt ?? new Date(),
-        },
+        data: { lastSeenAt: new Date() },
       }),
     );
 
@@ -118,6 +133,7 @@ authRouter.post(
       email: user.email,
       role: user.role,
     });
+    setAuthCookie(res, accessToken);
 
     res.json({
       user: {
@@ -131,6 +147,67 @@ authRouter.post(
       },
       accessToken,
     });
+  }),
+);
+
+authRouter.post(
+  "/logout",
+  asyncHandler(async (req, res) => {
+    const token = extractAccessToken(req);
+    if (token) {
+      try {
+        const payload = verifyAccessToken(token);
+        await revokeAccessToken(token, {
+          jti: payload.jti,
+          expiresAtMs: payload.exp ? payload.exp * 1000 : undefined,
+        });
+      } catch {
+        // still clear cookie
+      }
+    }
+    clearAuthCookie(res);
+    res.json({ ok: true });
+  }),
+);
+
+/** Exchange one-time OAuth code for session (sets httpOnly cookie + returns token). */
+authRouter.post(
+  "/oauth/exchange",
+  authStrictLimiter,
+  asyncHandler(async (req, res) => {
+    const body = oauthExchangeSchema.parse(req.body);
+    const accessToken = await consumeOAuthExchangeCode(body.code);
+    if (!accessToken) {
+      throw new AppError(
+        400,
+        "Invalid or expired OAuth code",
+        "OAUTH_EXCHANGE_INVALID",
+      );
+    }
+
+    const authUser = verifyAccessToken(accessToken);
+    const actor = { id: authUser.id, role: authUser.role };
+    const user = await withServiceTransaction(async (tx) =>
+      tx.user.findUnique({
+        where: { id: actor.id },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          avatarUrl: true,
+          role: true,
+          kycStatus: true,
+          createdAt: true,
+        },
+      }),
+    );
+
+    if (!user) {
+      throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+    }
+
+    setAuthCookie(res, accessToken);
+    res.json({ user, accessToken });
   }),
 );
 
@@ -213,6 +290,7 @@ authRouter.patch(
 
 authRouter.get(
   "/google",
+  authOauthStartLimiter,
   asyncHandler(async (_req, res) => {
     const url = await getGoogleAuthUrl();
     res.redirect(url);
@@ -229,16 +307,22 @@ authRouter.get(
     );
 
     if (req.query.format === "json") {
-      res.json(result);
+      // Still avoid returning long-lived token in browser redirects; JSON
+      // clients must be trusted (dev/tools). Prefer oauth/exchange.
+      res.json({
+        user: result.user,
+        exchangeHint: "Use browser redirect flow; token omitted in json mode",
+      });
       return;
     }
 
-    res.redirect(buildFrontendRedirect(result.accessToken));
+    res.redirect(await buildFrontendRedirect(result.accessToken));
   }),
 );
 
 authRouter.get(
   "/discord",
+  authOauthStartLimiter,
   asyncHandler(async (_req, res) => {
     const url = await getDiscordAuthUrl();
     res.redirect(url);
@@ -255,10 +339,13 @@ authRouter.get(
     );
 
     if (req.query.format === "json") {
-      res.json(result);
+      res.json({
+        user: result.user,
+        exchangeHint: "Use browser redirect flow; token omitted in json mode",
+      });
       return;
     }
 
-    res.redirect(buildFrontendRedirect(result.accessToken));
+    res.redirect(await buildFrontendRedirect(result.accessToken));
   }),
 );
