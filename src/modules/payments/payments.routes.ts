@@ -7,6 +7,7 @@ import { AppError } from "../../lib/errors";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import type { RlsActor } from "../../databases";
 import { confirmSandboxPayment } from "./sandbox.service";
+import { syncEfiPayment } from "./efi/efi.service";
 
 export const paymentsRouter = Router();
 
@@ -24,6 +25,24 @@ function safeEqualSecret(provided: string, expected: string) {
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
 }
+
+/** Poll Efi cob status and mark order paid when PIX is received (no webhook). */
+paymentsRouter.post(
+  "/efi/sync",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (env.PAYMENT_PROVIDER !== "efi") {
+      throw new AppError(
+        400,
+        "Efi payments are not enabled",
+        "EFI_DISABLED",
+      );
+    }
+    const body = confirmSchema.parse(req.body);
+    const result = await syncEfiPayment(body.providerRef, actorOf(req));
+    res.json({ ok: true, ...result });
+  }),
+);
 
 /** Sandbox only — buyer/admin simulates PIX paid. Disabled in production unless ALLOW_SANDBOX_PAYMENTS=true. */
 paymentsRouter.post(

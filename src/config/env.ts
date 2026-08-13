@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { z } from "zod";
 import { loadEnvironment } from "./load-env";
 import { resolveSslCertPath, withPostgresSsl } from "./ssl";
@@ -20,7 +22,18 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default("12h"),
   PLATFORM_FEE_BPS: z.coerce.number().int().min(0).max(10_000).default(1000),
   ESCROW_AUTO_RELEASE_HOURS: z.coerce.number().int().positive().default(48),
-  PAYMENT_PROVIDER: z.enum(["sandbox"]).default("sandbox"),
+  PAYMENT_PROVIDER: z.enum(["sandbox", "efi"]).default("sandbox"),
+  EFI_CLIENT_ID: z.string().optional(),
+  EFI_CLIENT_SECRET: z.string().optional(),
+  EFI_CERT_PATH: z.string().optional(),
+  EFI_CERT_PASSPHRASE: z.string().optional().default(""),
+  /** Optional PEM key when certificate is a .pem (not .p12). */
+  EFI_PEM_KEY_PATH: z.string().optional(),
+  EFI_PIX_KEY: z.string().optional(),
+  EFI_SANDBOX: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
   /**
    * When true, POST /api/payments/sandbox/confirm is allowed.
    * Defaults to false in production, true otherwise.
@@ -130,6 +143,25 @@ if (data.MEDIA_DRIVER === "s3" && !s3Configured) {
     "MEDIA_DRIVER=s3 requires MEDIA_S3_BUCKET, MEDIA_S3_ACCESS_KEY_ID, MEDIA_S3_SECRET_ACCESS_KEY",
   );
   process.exit(1);
+}
+
+if (data.PAYMENT_PROVIDER === "efi") {
+  const missing: string[] = [];
+  if (!data.EFI_CLIENT_ID?.trim()) missing.push("EFI_CLIENT_ID");
+  if (!data.EFI_CLIENT_SECRET?.trim()) missing.push("EFI_CLIENT_SECRET");
+  if (!data.EFI_CERT_PATH?.trim()) missing.push("EFI_CERT_PATH");
+  if (!data.EFI_PIX_KEY?.trim()) missing.push("EFI_PIX_KEY");
+  if (missing.length) {
+    console.error(
+      `PAYMENT_PROVIDER=efi requires: ${missing.join(", ")}`,
+    );
+    process.exit(1);
+  }
+  const certPath = resolve(process.cwd(), data.EFI_CERT_PATH!);
+  if (!existsSync(certPath)) {
+    console.error(`EFI certificate not found: ${certPath}`);
+    process.exit(1);
+  }
 }
 
 export const env = {

@@ -5,7 +5,7 @@ import { AppError } from "../../lib/errors";
 import { withRlsTransaction, type RlsActor } from "../../databases";
 import { routeParam } from "../../lib/route-param";
 import { requireAuth } from "../../middleware/auth";
-import { createSandboxPayment } from "../payments/sandbox.service";
+import { createOrderCheckout } from "../payments/payment.checkout";
 import { cancelOrderByBuyer } from "./orders.lifecycle";
 import {
   confirmOrderByBuyer,
@@ -107,7 +107,7 @@ ordersRouter.post(
       buyerId: actor.id,
       actor,
     });
-    const checkout = await createSandboxPayment(order.id, actor);
+    const checkout = await createOrderCheckout(order.id, actor);
     const full = await withRlsTransaction({ actor }, (tx) =>
       tx.order.findUniqueOrThrow({ where: { id: order.id }, select: orderSelect }),
     );
@@ -154,7 +154,7 @@ ordersRouter.post(
   asyncHandler(async (req, res) => {
     const id = routeParam(req.params.id);
     const actor = actorOf(req);
-    const checkout = await createSandboxPayment(id, actor);
+    const checkout = await createOrderCheckout(id, actor);
     res.json({ checkout });
   }),
 );

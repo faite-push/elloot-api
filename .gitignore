@@ -29,6 +29,7 @@ src/databases/**/certificates/*.pem
 src/databases/**/certificates/*.key
 src/databases/**/certificates/*.crt
 src/databases/**/certificates/*.p12
+src/databases/efi/*.p12
 !src/databases/**/certificates/.gitkeep
 
 # Legacy path

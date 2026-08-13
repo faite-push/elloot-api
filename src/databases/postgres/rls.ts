@@ -148,6 +148,7 @@ export type LockedOrder = {
   amountCents: number;
   feeCents: number;
   status: string;
+  expiresAt: Date | null;
 };
 
 export async function lockOrderForUpdate(
@@ -163,7 +164,8 @@ export async function lockOrderForUpdate(
       "sellerId",
       "amountCents",
       "feeCents",
-      status::text AS status
+      status::text AS status,
+      "expiresAt"
     FROM orders
     WHERE id = ${orderId}
     FOR UPDATE
