@@ -8,6 +8,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import type { RlsActor } from "../../databases";
 import { confirmSandboxPayment } from "./sandbox.service";
 import { syncEfiPayment } from "./efi/efi.service";
+import { listPaymentMethods } from "./payment.methods";
 
 export const paymentsRouter = Router();
 
@@ -25,6 +26,15 @@ function safeEqualSecret(provided: string, expected: string) {
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
 }
+
+/** Active / upcoming payment methods for checkout UI. */
+paymentsRouter.get(
+  "/methods",
+  requireAuth,
+  asyncHandler(async (_req, res) => {
+    res.json(listPaymentMethods());
+  }),
+);
 
 /** Poll Efi cob status and mark order paid when PIX is received (no webhook). */
 paymentsRouter.post(

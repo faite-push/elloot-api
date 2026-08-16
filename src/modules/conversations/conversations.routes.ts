@@ -33,9 +33,19 @@ const conversationSelect = {
       amountCents: true,
       buyerId: true,
       sellerId: true,
-      listing: { select: { id: true, title: true } },
-      buyer: { select: { id: true, name: true } },
-      seller: { select: { id: true, name: true } },
+      listing: {
+        select: {
+          id: true,
+          title: true,
+          media: {
+            take: 1,
+            orderBy: { sortOrder: "asc" as const },
+            select: { url: true },
+          },
+        },
+      },
+      buyer: { select: { id: true, name: true, avatarUrl: true } },
+      seller: { select: { id: true, name: true, avatarUrl: true } },
     },
   },
 } as const;
@@ -48,7 +58,7 @@ const messageSelect = {
   clientId: true,
   readAt: true,
   createdAt: true,
-  sender: { select: { id: true, name: true } },
+  sender: { select: { id: true, name: true, avatarUrl: true } },
 } as const;
 
 async function assertConversationParty(
@@ -101,6 +111,7 @@ conversationsRouter.get(
               body: true,
               senderId: true,
               createdAt: true,
+              sender: { select: { id: true, name: true } },
             },
           },
         },

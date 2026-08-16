@@ -22,10 +22,29 @@ enum KycStatus {
 
 enum ListingStatus {
   DRAFT
+  PENDING_REVIEW
   ACTIVE
   PAUSED
   SOLD
+  REJECTED
   REMOVED
+}
+
+enum ListingModerationType {
+  INITIAL
+  REVISION
+}
+
+enum ListingModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum ListingEventType {
+  VIEW
+  PURCHASE_INTENT
 }
 
 enum OrderStatus {
@@ -124,7 +143,12 @@ model User {
   reviewsWritten      Review[]           @relation("BuyerReviews")
   questionsAsked      ListingQuestion[]  @relation("QuestionAsker")
   questionsAnswered   ListingQuestion[]  @relation("QuestionAnswerer")
-  notifications       Notification[]
+  notifications            Notification[]
+  notificationPreferences  NotificationPreference[]
+  pushSubscriptions        PushSubscription[]
+  listingModerations       ListingModerationQueue[] @relation("ListingModerationReviews")
+  listingEventsViewed      ListingEvent[]     @relation("ListingEventViewer")
+  favorites                Favorite[]
 
   @@map("users")
 }
@@ -255,20 +279,49 @@ model Listing {
   /// How the seller fulfills: manual chat delivery vs automatic codes/keys.
   deliveryMode  DeliveryMode  @default(MANUAL)
   status        ListingStatus @default(DRAFT)
+  /// Admin rejection reason (visible to seller).
+  moderationNote       String?
+  submittedForReviewAt DateTime?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  seller    User              @relation("SellerListings", fields: [sellerId], references: [id])
-  category  Category          @relation(fields: [categoryId], references: [id])
-  media     ListingMedia[]
-  offers    ListingOffer[]
-  orders    Order[]
-  reviews   Review[]
-  questions ListingQuestion[]
+  seller           User                     @relation("SellerListings", fields: [sellerId], references: [id])
+  category         Category                 @relation(fields: [categoryId], references: [id])
+  media            ListingMedia[]
+  offers           ListingOffer[]
+  orders           Order[]
+  reviews          Review[]
+  questions        ListingQuestion[]
+  moderationQueue  ListingModerationQueue[]
+  events           ListingEvent[]
+  favorites        Favorite[]
 
   @@index([status, categoryId])
   @@index([sellerId])
   @@map("listings")
+}
+
+/// Funnel analytics: listing page views and purchase intents (cart / checkout).
+model ListingEvent {
+  id           String           @id @default(cuid())
+  listingId    String
+  sellerId     String
+  type         ListingEventType
+  /// Logged-in viewer when available.
+  viewerUserId String?
+  /// Opaque browser key for anonymous / dedupe (unique visits).
+  visitorKey   String
+  /// Snapshot value for PURCHASE_INTENT (listing/offer price).
+  amountCents  Int?
+  createdAt    DateTime         @default(now())
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  viewer  User?   @relation("ListingEventViewer", fields: [viewerUserId], references: [id], onDelete: SetNull)
+
+  @@index([sellerId, type, createdAt])
+  @@index([listingId, type, createdAt])
+  @@index([listingId, visitorKey, type, createdAt])
+  @@map("listing_events")
 }
 
 /// Options inside a DYNAMIC listing (GGMAX-style multi-item ad).
@@ -299,6 +352,29 @@ model ListingMedia {
 
   @@index([listingId])
   @@map("listing_media")
+}
+
+/// Admin review queue for first publish and content revisions on live listings.
+model ListingModerationQueue {
+  id            String                  @id @default(cuid())
+  listingId     String
+  type          ListingModerationType
+  status        ListingModerationStatus @default(PENDING)
+  /// Proposed changes for REVISION; {} for INITIAL (snapshot taken at review time).
+  payload       Json                    @default("{}")
+  changedFields String[]                @default([])
+  reviewNote    String?
+  reviewedById  String?
+  reviewedAt    DateTime?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  listing    Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  reviewedBy User?   @relation("ListingModerationReviews", fields: [reviewedById], references: [id])
+
+  @@index([status, createdAt])
+  @@index([listingId, status])
+  @@map("listing_moderation_queue")
 }
 
 model Order {
@@ -522,4 +598,49 @@ model Notification {
   @@index([userId, createdAt])
   @@index([userId, readAt])
   @@map("notifications")
+}
+
+/// Per-category in-app / browser-push toggles.
+model NotificationPreference {
+  id        String   @id @default(cuid())
+  userId    String
+  /// MESSAGE | ORDER | DISPUTE | QUESTION | REVIEW | SYSTEM
+  category  String
+  inApp     Boolean  @default(true)
+  push      Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
+  @@index([userId])
+  @@map("notification_preferences")
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  listingId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+  @@index([userId, createdAt])
+  @@map("favorites")
 }

@@ -70,7 +70,7 @@ function formatSandboxCheckout(
     expiresAt,
     pixCopyPaste: `ELLOOT-SANDBOX-${providerRef}-${amountCents}`,
     instructions:
-      "Sandbox: call POST /api/payments/sandbox/confirm (authenticated) with this providerRef to simulate a paid PIX.",
+      "Escaneie o QR ou copie o código PIX. Em sandbox, use “Simular pagamento PIX” para confirmar.",
   };
 }
 

@@ -5,6 +5,8 @@ import {
   withServiceTransaction,
   type RlsActor,
 } from "../../databases";
+import { routes } from "../conversations/hrefs";
+import { notifyUser } from "../conversations/notifications.notify";
 
 export type MarkOrderPaidInput = {
   providerRef: string;
@@ -22,7 +24,7 @@ export async function markOrderPaid(
   actor: RlsActor | null,
   options: MarkOrderPaidInput,
 ) {
-  return withServiceTransaction(async (tx) => {
+  const result = await withServiceTransaction(async (tx) => {
     const paymentRows = await tx.$queryRaw<
       {
         id: string;
@@ -58,6 +60,11 @@ export async function markOrderPaid(
     const releaseAt = new Date(
       Date.now() + env.ESCROW_AUTO_RELEASE_HOURS * 60 * 60 * 1000,
     );
+
+    const listing = await tx.listing.findUnique({
+      where: { id: order.listingId },
+      select: { title: true },
+    });
 
     await tx.payment.update({
       where: { id: payment.id },
@@ -103,6 +110,32 @@ export async function markOrderPaid(
       alreadyPaid: false as const,
       orderId: payment.orderId,
       releaseAt,
+      buyerId: order.buyerId,
+      sellerId: order.sellerId,
+      listingTitle: listing?.title ?? "seu anúncio",
     };
   }, actor ?? null);
+
+  if (!result.alreadyPaid) {
+    const href = routes.order(result.orderId);
+    const title = result.listingTitle;
+    void notifyUser({
+      userId: result.buyerId,
+      type: "ORDER",
+      title: "Pagamento confirmado",
+      body: `Seu pagamento de “${title}” foi confirmado.`,
+      href,
+      meta: { orderId: result.orderId },
+    });
+    void notifyUser({
+      userId: result.sellerId,
+      type: "ORDER",
+      title: "Nova venda paga",
+      body: `Você vendeu “${title}”. Entregue o produto ao comprador.`,
+      href: routes.dashboardSales,
+      meta: { orderId: result.orderId },
+    });
+  }
+
+  return result;
 }

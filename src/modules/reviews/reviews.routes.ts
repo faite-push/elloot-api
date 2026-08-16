@@ -10,8 +10,7 @@ import { AppError } from "../../lib/errors";
 import { routeParam } from "../../lib/route-param";
 import { sanitizeUserText } from "../../lib/sanitize";
 import { requireAuth } from "../../middleware/auth";
-import { createNotification } from "../notifications/notifications.service";
-import { emitNotificationNew } from "../../realtime/emit";
+import { notifyUser } from "../conversations/notifications.notify";
 
 export const reviewsRouter = Router();
 
@@ -228,16 +227,14 @@ reviewsRouter.post(
       });
     }
 
-    void createNotification({
+    void notifyUser({
       userId: result.sellerId,
       type: "REVIEW",
       title: "Nova avaliação recebida",
       body: `Você recebeu ${parsed.rating} estrela${parsed.rating === 1 ? "" : "s"}.`,
       href: `/dashboard/reviews`,
       meta: { reviewId: result.review.id },
-    })
-      .then((n) => emitNotificationNew(result.sellerId, n))
-      .catch(() => undefined);
+    });
 
     res.status(201).json({ review: result.review });
   }),

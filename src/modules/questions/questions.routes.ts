@@ -9,8 +9,7 @@ import { AppError } from "../../lib/errors";
 import { routeParam } from "../../lib/route-param";
 import { sanitizeUserText } from "../../lib/sanitize";
 import { requireAuth } from "../../middleware/auth";
-import { createNotification } from "../notifications/notifications.service";
-import { emitNotificationNew } from "../../realtime/emit";
+import { notifyUser } from "../conversations/notifications.notify";
 
 export const questionsRouter = Router();
 
@@ -175,16 +174,14 @@ questionsRouter.post(
       return { question, sellerId: listing.sellerId, title: listing.title };
     });
 
-    void createNotification({
+    void notifyUser({
       userId: result.sellerId,
       type: "QUESTION",
       title: "Nova pergunta no anúncio",
       body: `Pergunta em “${result.title}”: ${body.slice(0, 80)}`,
       href: `/dashboard/questions/received`,
       meta: { questionId: result.question.id, listingId },
-    })
-      .then((n) => emitNotificationNew(result.sellerId, n))
-      .catch(() => undefined);
+    });
 
     res.status(201).json({ question: result.question });
   }),
@@ -237,16 +234,14 @@ questionsRouter.post(
       };
     });
 
-    void createNotification({
+    void notifyUser({
       userId: result.askerId,
       type: "QUESTION",
       title: "Sua pergunta foi respondida",
       body: `Resposta em “${result.title}”: ${answer.slice(0, 80)}`,
       href: `/listings/${result.listingId}`,
       meta: { questionId: result.question.id, listingId: result.listingId },
-    })
-      .then((n) => emitNotificationNew(result.askerId, n))
-      .catch(() => undefined);
+    });
 
     res.json({ question: result.question });
   }),

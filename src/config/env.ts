@@ -72,6 +72,12 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("true")
     .transform((v) => v === "true"),
+
+  /** Web Push (optional). Generate: npx web-push generate-vapid-keys */
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  /** mailto: or https: contact for push service */
+  VAPID_SUBJECT: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -174,4 +180,9 @@ export const env = {
   mediaSigningSecret: data.MEDIA_SIGNING_SECRET || data.JWT_SECRET,
   s3Configured,
   allowSandboxPayments,
+  webPushEnabled: Boolean(
+    data.VAPID_PUBLIC_KEY?.trim() &&
+      data.VAPID_PRIVATE_KEY?.trim() &&
+      data.VAPID_SUBJECT?.trim(),
+  ),
 };

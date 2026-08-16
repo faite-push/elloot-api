@@ -62,6 +62,10 @@ export const createListingSchema = z
     }
   });
 
+const updateListingOfferSchema = listingOfferSchema.extend({
+  id: z.string().min(1).optional(),
+});
+
 export const updateListingSchema = z
   .object({
     categoryId: z.string().min(1).optional(),
@@ -73,9 +77,24 @@ export const updateListingSchema = z
       .enum(["CONTA", "ITEM", "SERVICO", "GOLD", "OUTROS"])
       .optional()
       .nullable(),
+    deliveryMode: z.enum(["MANUAL", "AUTO"]).optional(),
     mediaAssetIds: z.array(z.string().min(1)).max(8).optional(),
     mediaUrls: z.array(z.url()).max(8).optional(),
+    offers: z.array(updateListingOfferSchema).min(2).max(30).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "Provide at least one field to update",
+  })
+  .superRefine((data, ctx) => {
+    if (data.offers && data.offers.length < 2) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Dynamic listings require at least 2 offers",
+        path: ["offers"],
+      });
+    }
   });
+
+export const reorderOffersSchema = z.object({
+  offerIds: z.array(z.string().min(1)).min(1).max(30),
+});

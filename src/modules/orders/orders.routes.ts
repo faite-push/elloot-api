@@ -12,6 +12,19 @@ import {
   createOrderFromListing,
   markOrderDelivered,
 } from "./orders.service";
+import {
+  SELLER_METRIC_RANGES,
+  aggregateSellerMetrics,
+  loadPriorBuyerIds,
+  loadSellerMetricOrders,
+  previousWindow,
+  rangeWindow,
+  windowFromDates,
+} from "./orders.metrics";
+import {
+  aggregateFunnelFromEvents,
+  loadSellerListingEvents,
+} from "../listings/listings.events";
 
 export const ordersRouter = Router();
 
@@ -115,22 +128,134 @@ ordersRouter.post(
   }),
 );
 
+const mineQuerySchema = z.object({
+  role: z.enum(["buyer", "seller", "all"]).optional().default("all"),
+  status: z
+    .enum([
+      "PENDING_PAYMENT",
+      "PAID",
+      "DELIVERED",
+      "COMPLETED",
+      "CANCELLED",
+      "EXPIRED",
+      "DISPUTED",
+      "REFUNDED",
+    ])
+    .optional(),
+  q: z.string().trim().max(80).optional(),
+  take: z.coerce.number().int().min(1).max(100).optional().default(50),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+const metricsQuerySchema = z.object({
+  range: z.enum(SELLER_METRIC_RANGES).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
 ordersRouter.get(
   "/mine",
   requireAuth,
   asyncHandler(async (req, res) => {
+    const query = mineQuerySchema.parse(req.query);
     const actor = actorOf(req);
+    const dateWindow =
+      query.from && query.to ? windowFromDates(query.from, query.to) : null;
     const orders = await withRlsTransaction({ actor }, (tx) =>
       tx.order.findMany({
         where: {
-          OR: [{ buyerId: actor.id }, { sellerId: actor.id }],
+          ...(query.role === "seller"
+            ? { sellerId: actor.id }
+            : query.role === "buyer"
+              ? { buyerId: actor.id }
+              : { OR: [{ buyerId: actor.id }, { sellerId: actor.id }] }),
+          ...(query.status ? { status: query.status } : {}),
+          ...(query.q
+            ? {
+                listing: {
+                  title: { contains: query.q, mode: "insensitive" },
+                },
+              }
+            : {}),
+          ...(dateWindow
+            ? { createdAt: { gte: dateWindow.start, lte: dateWindow.end } }
+            : {}),
         },
         orderBy: { createdAt: "desc" },
-        take: 50,
+        take: query.take,
         select: orderSelect,
       }),
     );
     res.json({ orders });
+  }),
+);
+
+ordersRouter.get(
+  "/seller/metrics",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const query = metricsQuerySchema.parse(req.query);
+    const actor = actorOf(req);
+    const window =
+      query.from && query.to
+        ? windowFromDates(query.from, query.to)
+        : rangeWindow(query.range ?? "30d");
+    if (!window) {
+      throw new AppError(400, "Invalid date range", "INVALID_RANGE");
+    }
+
+    const previous = previousWindow(window);
+
+    const metrics = await withRlsTransaction({ actor }, async (tx) => {
+      const [
+        orders,
+        previousOrders,
+        priorBuyerIds,
+        activeListings,
+        currentEvents,
+        previousEvents,
+      ] = await Promise.all([
+        loadSellerMetricOrders(tx, actor.id, window.start, window.end),
+        loadSellerMetricOrders(tx, actor.id, previous.start, previous.end),
+        loadPriorBuyerIds(tx, actor.id, window.start),
+        tx.listing.count({
+          where: { sellerId: actor.id, status: "ACTIVE" },
+        }),
+        loadSellerListingEvents(tx, actor.id, window.start, window.end),
+        loadSellerListingEvents(tx, actor.id, previous.start, previous.end),
+      ]);
+
+      const currentFunnel = aggregateFunnelFromEvents(currentEvents);
+      const previousFunnel = aggregateFunnelFromEvents(previousEvents);
+
+      const titleIds = new Set<string>([
+        ...orders.map((o) => o.listing.id),
+        ...currentFunnel.byListing.keys(),
+      ]);
+      const titleRows =
+        titleIds.size > 0
+          ? await tx.listing.findMany({
+              where: { id: { in: [...titleIds] }, sellerId: actor.id },
+              select: { id: true, title: true },
+            })
+          : [];
+      const listingTitles = new Map(titleRows.map((row) => [row.id, row.title]));
+
+      return aggregateSellerMetrics(
+        orders,
+        previousOrders,
+        priorBuyerIds,
+        currentFunnel,
+        previousFunnel,
+        window,
+        previous,
+        activeListings,
+        listingTitles,
+      );
+    });
+
+    res.json({ metrics });
   }),
 );
 

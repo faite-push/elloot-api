@@ -12,6 +12,8 @@ import { calcFeeCents } from "./orders.fees";
 import {
   tryReserveListing,
 } from "./orders.reserve";
+import { routes } from "../conversations/hrefs";
+import { notifyUser } from "../conversations/notifications.notify";
 
 export { calcFeeCents };
 
@@ -116,13 +118,13 @@ export async function markOrderDelivered(
     throw new AppError(403, "Forbidden", "FORBIDDEN");
   }
 
-  return withServiceTransaction(async (tx) => {
-    const order = await lockOrderForUpdate(tx, orderId);
-    if (!order) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
-    if (order.sellerId !== sellerId && actor.role !== "ADMIN") {
+  const order = await withServiceTransaction(async (tx) => {
+    const locked = await lockOrderForUpdate(tx, orderId);
+    if (!locked) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
+    if (locked.sellerId !== sellerId && actor.role !== "ADMIN") {
       throw new AppError(403, "Forbidden", "FORBIDDEN");
     }
-    if (order.status !== "PAID") {
+    if (locked.status !== "PAID") {
       throw new AppError(409, "Order is not awaiting delivery", "INVALID_STATUS");
     }
 
@@ -131,6 +133,17 @@ export async function markOrderDelivered(
       data: { status: "DELIVERED", deliveredAt: new Date() },
     });
   }, actor);
+
+  void notifyUser({
+    userId: order.buyerId,
+    type: "ORDER",
+    title: "Pedido entregue",
+    body: "O vendedor marcou seu pedido como entregue. Confirme o recebimento.",
+    href: routes.order(order.id),
+    meta: { orderId: order.id },
+  });
+
+  return order;
 }
 
 export async function confirmOrderByBuyer(
@@ -142,18 +155,30 @@ export async function confirmOrderByBuyer(
     throw new AppError(403, "Forbidden", "FORBIDDEN");
   }
 
-  return withServiceTransaction(async (tx) => {
-    const order = await lockOrderForUpdate(tx, orderId);
-    if (!order) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
-    if (order.buyerId !== buyerId) {
+  const order = await withServiceTransaction(async (tx) => {
+    const locked = await lockOrderForUpdate(tx, orderId);
+    if (!locked) throw new AppError(404, "Order not found", "ORDER_NOT_FOUND");
+    if (locked.buyerId !== buyerId) {
       throw new AppError(403, "Forbidden", "FORBIDDEN");
     }
-    if (order.status !== "PAID" && order.status !== "DELIVERED") {
+    if (locked.status !== "PAID" && locked.status !== "DELIVERED") {
       throw new AppError(409, "Order cannot be confirmed", "INVALID_STATUS");
     }
 
-    return completeOrderTx(tx, order.id);
+    await completeOrderTx(tx, locked.id);
+    return locked;
   }, actor);
+
+  void notifyUser({
+    userId: order.sellerId,
+    type: "ORDER",
+    title: "Pedido confirmado",
+    body: "O comprador confirmou o recebimento. O valor será liberado na sua carteira.",
+    href: routes.dashboardSales,
+    meta: { orderId: order.id },
+  });
+
+  return order;
 }
 
 export async function completeOrder(orderId: string, actor?: RlsActor | null) {

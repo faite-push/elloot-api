@@ -11,8 +11,7 @@ import {
   settlePartialOrderTx,
 } from "../orders/orders.lifecycle";
 import { routes } from "../conversations/hrefs";
-import { createNotification } from "../notifications/notifications.service";
-import { emitNotificationNew } from "../../realtime/emit";
+import { notifyUser } from "../conversations/notifications.notify";
 
 export async function openDispute(input: {
   orderId: string;
@@ -79,18 +78,14 @@ export async function openDispute(input: {
   }, input.actor);
 
   if (result.recipientId !== input.actor.id) {
-    void createNotification({
+    void notifyUser({
       userId: result.recipientId,
       type: "DISPUTE",
       title: "Disputa aberta",
       body: "Um pedido em que você participa entrou em disputa.",
       href: routes.order(result.orderId),
       meta: { disputeId: result.dispute.id, orderId: result.orderId },
-    })
-      .then((notification) => {
-        emitNotificationNew(result.recipientId, notification);
-      })
-      .catch(() => undefined);
+    });
   }
 
   return result.dispute;
@@ -111,7 +106,7 @@ export async function resolveDispute(input: {
     ? sanitizeUserText(input.notes, 2000)
     : undefined;
 
-  return withServiceTransaction(async (tx) => {
+  const result = await withServiceTransaction(async (tx) => {
     const dispute = await tx.dispute.findUnique({
       where: { id: input.disputeId },
     });
@@ -169,6 +164,36 @@ export async function resolveDispute(input: {
       },
     });
 
-    return updated;
+    return {
+      dispute: updated,
+      buyerId: order.buyerId,
+      sellerId: order.sellerId,
+      orderId: order.id,
+      resolution: input.resolution,
+    };
   }, input.actor);
+
+  const resolutionLabel =
+    result.resolution === "RELEASE_TO_SELLER"
+      ? "Valor liberado ao vendedor."
+      : result.resolution === "REFUND_BUYER"
+        ? "Reembolso ao comprador."
+        : "Acordo parcial aplicado.";
+
+  for (const userId of [result.buyerId, result.sellerId]) {
+    void notifyUser({
+      userId,
+      type: "DISPUTE",
+      title: "Disputa resolvida",
+      body: resolutionLabel,
+      href: routes.order(result.orderId),
+      meta: {
+        disputeId: result.dispute.id,
+        orderId: result.orderId,
+        resolution: result.resolution,
+      },
+    });
+  }
+
+  return result.dispute;
 }

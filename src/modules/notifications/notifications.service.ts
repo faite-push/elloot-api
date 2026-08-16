@@ -94,21 +94,52 @@ export async function createNotification(input: {
 
 export async function listMyNotifications(
   actor: RlsActor,
-  opts?: { unreadOnly?: boolean; take?: number },
+  opts?: { unreadOnly?: boolean; take?: number; cursor?: string },
 ) {
   const take = Math.min(opts?.take ?? 40, 100);
-  const rows = await withRlsTransaction({ actor }, async (tx) =>
-    tx.notification.findMany({
+  const rows = await withRlsTransaction({ actor }, async (tx) => {
+    let cursorFilter: Prisma.NotificationWhereInput | undefined;
+    if (opts?.cursor) {
+      const cursorRow = await tx.notification.findFirst({
+        where: { id: opts.cursor, userId: actor.id },
+        select: { id: true, createdAt: true },
+      });
+      if (cursorRow) {
+        cursorFilter = {
+          OR: [
+            { createdAt: { lt: cursorRow.createdAt } },
+            { createdAt: cursorRow.createdAt, id: { lt: cursorRow.id } },
+          ],
+        };
+      }
+    }
+
+    return tx.notification.findMany({
       where: {
         userId: actor.id,
         ...(opts?.unreadOnly ? { readAt: null } : {}),
+        ...cursorFilter,
       },
-      orderBy: { createdAt: "desc" },
-      take,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: take + 1,
       select: notificationSelect,
+    });
+  });
+  const hasMore = rows.length > take;
+  const page = hasMore ? rows.slice(0, take) : rows;
+  const nextCursor = hasMore ? page[page.length - 1]?.id ?? null : null;
+  return {
+    notifications: page.map(serialize),
+    nextCursor,
+  };
+}
+
+export async function countUnreadNotifications(actor: RlsActor) {
+  return withRlsTransaction({ actor }, async (tx) =>
+    tx.notification.count({
+      where: { userId: actor.id, readAt: null },
     }),
   );
-  return rows.map(serialize);
 }
 
 export async function markNotificationRead(

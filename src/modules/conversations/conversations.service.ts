@@ -6,8 +6,8 @@ import {
 import { AppError } from "../../lib/errors";
 import { sanitizeUserText } from "../../lib/sanitize";
 import { routes } from "./hrefs";
-import { emitMessageNew, emitNotificationNew } from "../../realtime/emit";
-import { createNotification } from "../notifications/notifications.service";
+import { emitMessageNew } from "../../realtime/emit";
+import { notifyUser } from "./notifications.notify";
 
 export const messageSelect = {
   id: true,
@@ -17,8 +17,15 @@ export const messageSelect = {
   clientId: true,
   readAt: true,
   createdAt: true,
-  sender: { select: { id: true, name: true } },
+  sender: { select: { id: true, name: true, avatarUrl: true } },
 } as const;
+
+function stripReplyMarker(body: string) {
+  if (!body.startsWith("[[elloot-reply:")) return body;
+  const close = body.indexOf("]]");
+  if (close < 0) return body;
+  return body.slice(close + 2).replace(/^\n/, "").trimStart();
+}
 
 function serializeMessage(
   message: {
@@ -29,7 +36,7 @@ function serializeMessage(
     clientId: string | null;
     readAt: Date | null;
     createdAt: Date;
-    sender?: { id: string; name: string | null };
+    sender?: { id: string; name: string | null; avatarUrl?: string | null };
   },
 ) {
   return {
@@ -107,8 +114,11 @@ export async function sendConversationMessage(input: {
   }
 
   const now = new Date();
+  const displayBody = stripReplyMarker(body);
   const preview =
-    body.length > 140 ? `${body.slice(0, 137).trimEnd()}…` : body;
+    displayBody.length > 140
+      ? `${displayBody.slice(0, 137).trimEnd()}…`
+      : displayBody;
 
   const created = await withServiceTransaction(async (tx) => {
     const message = await tx.message.create({
@@ -144,7 +154,7 @@ export async function sendConversationMessage(input: {
 
   if (recipientId !== input.actor.id) {
     const senderName = created.sender?.name?.trim() || "Alguém";
-    void createNotification({
+    void notifyUser({
       userId: recipientId,
       type: "MESSAGE",
       title: "Nova mensagem",
@@ -154,11 +164,7 @@ export async function sendConversationMessage(input: {
         conversationId: input.conversationId,
         messageId: message.id,
       },
-    })
-      .then((notification) => {
-        emitNotificationNew(recipientId, notification);
-      })
-      .catch(() => undefined);
+    });
   }
 
   return { message, created: true as const };
