@@ -12,6 +12,8 @@ export function createApp() {
   const app = express();
 
   app.disable("x-powered-by");
+  // Square Cloud sits behind a reverse proxy that sets X-Forwarded-For.
+  app.set("trust proxy", 1);
 
   app.use(
     helmet({

@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
@@ -84,11 +90,80 @@ function prismaRelative(absPath: string) {
   return relative(prismaDir, absPath).replace(/\\/g, "/");
 }
 
+type PostgresIdentity = {
+  rootCertPath: string;
+  certPath: string;
+  keyPath?: string;
+  identityPath?: string;
+  password: string;
+};
+
+function unlinkIfExists(filePath: string) {
+  if (existsSync(filePath)) {
+    unlinkSync(filePath);
+  }
+}
+
+/**
+ * Prisma's OpenSSL 3 engine (Linux / Square Cloud) cannot read PKCS#12
+ * encrypted with RC2-40-CBC (`openssl pkcs12 -legacy`). Export AES first;
+ * only use `-legacy` as a last resort on Windows.
+ */
+function exportPkcs12(
+  openssl: string,
+  identityPath: string,
+  keyPath: string,
+  certPath: string,
+  password: string,
+) {
+  unlinkIfExists(identityPath);
+
+  const base = [
+    "pkcs12",
+    "-export",
+    "-out",
+    identityPath,
+    "-inkey",
+    keyPath,
+    "-in",
+    certPath,
+    "-passout",
+    `pass:${password}`,
+  ];
+
+  const attempts: string[][] = [
+    [
+      ...base,
+      "-keypbe",
+      "AES-256-CBC",
+      "-certpbe",
+      "AES-256-CBC",
+      "-macalg",
+      "SHA256",
+    ],
+    base,
+  ];
+  if (process.platform === "win32") {
+    attempts.push([...base, "-legacy"]);
+  }
+
+  for (const args of attempts) {
+    try {
+      execFileSync(openssl, args, { stdio: "pipe" });
+      if (existsSync(identityPath)) return;
+    } catch {
+      /* try next encoding */
+    }
+  }
+
+  throw new Error("Falha ao gerar client.p12 a partir do certificate.pem");
+}
+
 /** Split combined Square Cloud PEM and build a PKCS#12 identity for Prisma. */
 export function ensurePostgresIdentity(
   pemPath: string,
   password: string,
-): { identityPath: string; rootCertPath: string; password: string } {
+): PostgresIdentity {
   const pem = readFileSync(pemPath, "utf8").replace(/^\uFEFF/, "");
   const { key, certs } = extractPemBlocks(pem);
   if (!certs.length) {
@@ -108,39 +183,17 @@ export function ensurePostgresIdentity(
   }
 
   if (!key) {
-    return { identityPath: certPath, rootCertPath: certPath, password };
+    return { rootCertPath: certPath, certPath, password };
   }
 
-  const openssl = findOpenSsl();
-  const args = [
-    "pkcs12",
-    "-export",
-    "-out",
-    identityPath,
-    "-inkey",
-    keyPath,
-    "-in",
+  exportPkcs12(findOpenSsl(), identityPath, keyPath, certPath, password);
+  return {
+    rootCertPath: certPath,
     certPath,
-    "-passout",
-    `pass:${password}`,
-    "-legacy",
-  ];
-
-  try {
-    execFileSync(openssl, args, { stdio: "ignore" });
-  } catch {
-    execFileSync(
-      openssl,
-      args.filter((a) => a !== "-legacy"),
-      { stdio: "pipe" },
-    );
-  }
-
-  if (!existsSync(identityPath)) {
-    throw new Error("Falha ao gerar client.p12 a partir do certificate.pem");
-  }
-
-  return { identityPath, rootCertPath: certPath, password };
+    keyPath,
+    identityPath,
+    password,
+  };
 }
 
 /** Append Square Cloud SSL query params for Prisma/libpq. */
@@ -159,9 +212,20 @@ export function withPostgresSsl(
   url.searchParams.set("sslmode", "verify-full");
   url.searchParams.set("sslaccept", "accept_invalid_certs");
   url.searchParams.set("sslrootcert", prismaRelative(identity.rootCertPath));
-  url.searchParams.set("sslidentity", prismaRelative(identity.identityPath));
-  url.searchParams.set("sslpassword", identity.password);
   url.searchParams.delete("sslcert");
   url.searchParams.delete("sslkey");
+  url.searchParams.delete("sslidentity");
+  url.searchParams.delete("sslpassword");
+
+  if (identity.identityPath) {
+    url.searchParams.set("sslidentity", prismaRelative(identity.identityPath));
+    url.searchParams.set("sslpassword", identity.password);
+  } else {
+    url.searchParams.set("sslcert", prismaRelative(identity.certPath));
+    if (identity.keyPath) {
+      url.searchParams.set("sslkey", prismaRelative(identity.keyPath));
+    }
+  }
+
   return url.toString();
 }
