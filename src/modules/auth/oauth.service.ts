@@ -364,6 +364,9 @@ export async function handleOAuthCallback(
     id: user.id,
     email: user.email,
     role: user.role,
+    name: user.name,
+    avatarUrl: user.avatarUrl,
+    kycStatus: user.kycStatus,
   });
 
   return {

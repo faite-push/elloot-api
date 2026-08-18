@@ -15,6 +15,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL_CERT_PATH: z.string().optional(),
   DATABASE_SSL_CERT: z.string().optional(),
+  DATABASE_SSL_P12_PASSWORD: z.string().optional().default("elloot"),
   REDIS_URL: z.string().optional(),
   REDIS_SSL_CERT_PATH: z.string().optional(),
   REDIS_SSL_CERT: z.string().optional(),
@@ -135,7 +136,11 @@ const redisCertPath = resolveSslCertPath({
 });
 
 if (postgresCertPath) {
-  process.env.DATABASE_URL = withPostgresSsl(data.DATABASE_URL, postgresCertPath);
+  process.env.DATABASE_URL = withPostgresSsl(
+    data.DATABASE_URL,
+    postgresCertPath,
+    data.DATABASE_SSL_P12_PASSWORD,
+  );
 }
 
 const s3Configured = Boolean(

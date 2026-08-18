@@ -220,6 +220,9 @@ listingsRouter.post(
         id: req.user!.id,
         email: req.user!.email,
         role: "SELLER",
+        name: req.user!.name,
+        avatarUrl: req.user!.avatarUrl,
+        kycStatus: req.user!.kycStatus,
       });
       if (req.accessToken) {
         try {

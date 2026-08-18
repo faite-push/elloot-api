@@ -9,6 +9,7 @@ import { clearAuthCookie, extractAccessToken, setAuthCookie } from "../../lib/au
 import { sanitizeUserText } from "../../lib/sanitize";
 import {
   requireAuth,
+  sessionUserFromAuth,
   signAccessToken,
   verifyAccessToken,
 } from "../../middleware/auth";
@@ -16,7 +17,7 @@ import {
   authOauthStartLimiter,
   authStrictLimiter,
 } from "../../middleware/rate-limit";
-import { revokeAccessToken } from "./token-revoke";
+import { isAccessTokenRevoked, revokeAccessToken } from "./token-revoke";
 import {
   buildFrontendRedirect,
   consumeOAuthExchangeCode,
@@ -26,6 +27,43 @@ import {
 } from "./oauth.service";
 
 export const authRouter = Router();
+
+function syncAuthCookie(
+  res: Parameters<typeof setAuthCookie>[0],
+  user: {
+    id: string;
+    email: string;
+    role: "BUYER" | "SELLER" | "ADMIN";
+    name?: string | null;
+    avatarUrl?: string | null;
+    kycStatus?: "NONE" | "PENDING" | "APPROVED" | "REJECTED";
+  },
+  current?: {
+    name?: string | null;
+    avatarUrl?: string | null;
+    role?: string;
+    kycStatus?: string | null;
+  },
+) {
+  const stale =
+    !current ||
+    (current.name ?? null) !== (user.name ?? null) ||
+    (current.avatarUrl ?? null) !== (user.avatarUrl ?? null) ||
+    current.role !== user.role ||
+    (current.kycStatus ?? "NONE") !== (user.kycStatus ?? "NONE");
+  if (!stale) return;
+  setAuthCookie(
+    res,
+    signAccessToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      kycStatus: user.kycStatus,
+    }),
+  );
+}
 
 const registerSchema = z.object({
   email: z.email(),
@@ -93,6 +131,9 @@ authRouter.post(
       id: user.id,
       email: user.email,
       role: user.role,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      kycStatus: user.kycStatus,
     });
     setAuthCookie(res, accessToken);
 
@@ -132,6 +173,9 @@ authRouter.post(
       id: user.id,
       email: user.email,
       role: user.role,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      kycStatus: user.kycStatus,
     });
     setAuthCookie(res, accessToken);
 
@@ -167,6 +211,28 @@ authRouter.post(
     }
     clearAuthCookie(res);
     res.json({ ok: true });
+  }),
+);
+
+/** Fast session from JWT claims — no DB. Used by the navbar. */
+authRouter.get(
+  "/session",
+  asyncHandler(async (req, res) => {
+    const token = extractAccessToken(req);
+    if (!token) {
+      throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+    }
+
+    const payload = verifyAccessToken(token);
+    const revoked = await isAccessTokenRevoked({
+      jti: payload.jti,
+      token,
+    });
+    if (revoked) {
+      throw new AppError(401, "Token revoked", "TOKEN_REVOKED");
+    }
+
+    res.json({ user: sessionUserFromAuth(payload) });
   }),
 );
 
@@ -251,6 +317,7 @@ authRouter.get(
       throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
     }
 
+    syncAuthCookie(res, user, req.user);
     res.json({ user });
   }),
 );
@@ -284,6 +351,7 @@ authRouter.patch(
       }),
     );
 
+    syncAuthCookie(res, user);
     res.json({ user });
   }),
 );

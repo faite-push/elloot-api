@@ -10,6 +10,9 @@ export type AuthUser = {
   id: string;
   email: string;
   role: "BUYER" | "SELLER" | "ADMIN";
+  name?: string | null;
+  avatarUrl?: string | null;
+  kycStatus?: "NONE" | "PENDING" | "APPROVED" | "REJECTED" | null;
 };
 
 declare global {
@@ -25,10 +28,43 @@ type JwtPayload = {
   sub: string;
   email: string;
   role: AuthUser["role"];
+  name?: string | null;
+  avatarUrl?: string | null;
+  kycStatus?: AuthUser["kycStatus"];
   jti?: string;
   exp?: number;
   iat?: number;
 };
+
+export type SessionUser = {
+  id: string;
+  email: string;
+  name: string | null;
+  avatarUrl: string | null;
+  role: AuthUser["role"];
+  kycStatus: NonNullable<AuthUser["kycStatus"]>;
+};
+
+function sessionClaimsFrom(user: AuthUser) {
+  return {
+    email: user.email,
+    role: user.role,
+    name: user.name ?? null,
+    avatarUrl: user.avatarUrl ?? null,
+    kycStatus: user.kycStatus ?? "NONE",
+  };
+}
+
+export function sessionUserFromAuth(user: AuthUser): SessionUser {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name ?? null,
+    avatarUrl: user.avatarUrl ?? null,
+    role: user.role,
+    kycStatus: user.kycStatus ?? "NONE",
+  };
+}
 
 const ROLE_CACHE_TTL_MS = 15_000;
 const roleCache = new Map<
@@ -37,19 +73,12 @@ const roleCache = new Map<
 >();
 
 export function signAccessToken(user: AuthUser) {
-  return jwt.sign(
-    {
-      email: user.email,
-      role: user.role,
-    },
-    env.JWT_SECRET,
-    {
-      subject: user.id,
-      jwtid: newTokenId(),
-      expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"],
-      algorithm: "HS256",
-    },
-  );
+  return jwt.sign(sessionClaimsFrom(user), env.JWT_SECRET, {
+    subject: user.id,
+    jwtid: newTokenId(),
+    expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"],
+    algorithm: "HS256",
+  });
 }
 
 export function verifyAccessToken(token: string): AuthUser & {
@@ -70,6 +99,9 @@ export function verifyAccessToken(token: string): AuthUser & {
       id: payload.sub,
       email: payload.email,
       role: payload.role,
+      name: payload.name ?? null,
+      avatarUrl: payload.avatarUrl ?? null,
+      kycStatus: payload.kycStatus ?? "NONE",
       jti: payload.jti,
       exp: payload.exp,
     };
@@ -128,6 +160,9 @@ export async function resolveAuthUserFromDb(
     id: row.id,
     email: row.email,
     role: row.role as AuthUser["role"],
+    name: jwtUser.name ?? null,
+    avatarUrl: jwtUser.avatarUrl ?? null,
+    kycStatus: jwtUser.kycStatus ?? "NONE",
   };
   roleCache.set(row.id, {
     user,

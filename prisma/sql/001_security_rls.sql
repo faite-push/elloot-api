@@ -8,7 +8,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'elloot_app') THEN
     -- Password MUST be set out-of-band (never commit secrets):
     --   ALTER ROLE elloot_app PASSWORD '...';
-    CREATE ROLE elloot_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT LOGIN;
+    CREATE ROLE elloot_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT NOLOGIN;
   END IF;
 END
 $$;
